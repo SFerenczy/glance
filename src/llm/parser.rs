@@ -58,11 +58,7 @@ pub fn parse_llm_response(response: &str) -> ParsedResponse {
 ///
 /// Pass an empty string for `lang` to match blocks without a language specifier.
 fn extract_code_block(text: &str, lang: &str) -> Option<String> {
-    let _pattern = if lang.is_empty() {
-        "```\n"
-    } else {
-        ""
-    };
+    let _pattern = if lang.is_empty() { "```\n" } else { "" };
 
     // Build the start pattern
     let start_pattern = if lang.is_empty() {

@@ -74,8 +74,7 @@ impl MockLlmClient {
         }
 
         if input_lower.contains("update") && input_lower.contains("user") {
-            return "```sql\nUPDATE users SET name = 'Updated Name' WHERE id = 1;\n```"
-                .to_string();
+            return "```sql\nUPDATE users SET name = 'Updated Name' WHERE id = 1;\n```".to_string();
         }
 
         if input_lower.contains("delete") && input_lower.contains("user") {
