@@ -55,7 +55,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
 /// Renders the chat panel.
 fn render_chat(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.focus == Focus::Chat;
-    let widget = chat::ChatPanel::new(focused);
+    let widget = chat::ChatPanel::new(&app.messages, app.chat_scroll, focused);
     frame.render_widget(widget, area);
 }
 
