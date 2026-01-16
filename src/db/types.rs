@@ -20,8 +20,15 @@ pub struct QueryResult {
     #[serde(with = "duration_serde")]
     pub execution_time: Duration,
 
-    /// Total number of rows affected or returned.
+    /// Number of rows in the result (may be truncated).
     pub row_count: usize,
+
+    /// Total number of rows before truncation (if known).
+    pub total_rows: Option<usize>,
+
+    /// Whether the result was truncated due to exceeding MAX_ROWS.
+    #[serde(default)]
+    pub was_truncated: bool,
 }
 
 #[allow(dead_code)]
@@ -39,6 +46,8 @@ impl QueryResult {
             rows,
             execution_time: Duration::ZERO,
             row_count,
+            total_rows: Some(row_count),
+            was_truncated: false,
         }
     }
 
@@ -51,6 +60,19 @@ impl QueryResult {
     /// Returns true if the result set is empty.
     pub fn is_empty(&self) -> bool {
         self.rows.is_empty()
+    }
+
+    /// Returns a truncation warning message if the result was truncated.
+    pub fn truncation_warning(&self) -> Option<String> {
+        if self.was_truncated {
+            let total = self.total_rows.unwrap_or(self.row_count);
+            Some(format!(
+                "⚠ Result truncated: showing {} of {} rows",
+                self.row_count, total
+            ))
+        } else {
+            None
+        }
     }
 }
 

@@ -441,11 +441,31 @@ impl App {
                     _ => {}
                 }
             }
-            Event::Resize(_, _) => {
-                // Terminal resize is handled automatically by ratatui
+            Event::Resize(width, height) => {
+                // Terminal resize: clamp scroll position to valid range
+                // The actual re-render is handled automatically by ratatui
+                self.handle_resize(width, height);
             }
             Event::Tick => {
                 // Periodic tick for animations/updates (not used yet)
+            }
+        }
+    }
+
+    /// Handles terminal resize by clamping scroll positions.
+    fn handle_resize(&mut self, _width: u16, _height: u16) {
+        // Clamp chat scroll to valid range based on content
+        let max_scroll = self.total_chat_lines().saturating_sub(1);
+        self.chat_scroll = self.chat_scroll.min(max_scroll);
+
+        // Clamp sidebar selection to valid range
+        if let Some(selected) = self.selected_query {
+            if selected >= self.query_log.len() {
+                self.selected_query = if self.query_log.is_empty() {
+                    None
+                } else {
+                    Some(self.query_log.len() - 1)
+                };
             }
         }
     }
