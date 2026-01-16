@@ -2,6 +2,7 @@
 
 mod cli;
 mod config;
+mod db;
 mod error;
 
 use cli::Cli;
