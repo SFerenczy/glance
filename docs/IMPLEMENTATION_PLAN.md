@@ -29,7 +29,7 @@ Create `Cargo.toml` with all dependencies:
 
 ### 0.3: Docker Compose for Test Database
 
-Create `docker-compose.yml`:
+Create `docker compose.yml`:
 
 ```yaml
 services:
@@ -96,11 +96,11 @@ Create `justfile` (or Makefile) for common commands:
 ```just
 # Start test database
 db:
-    docker-compose up -d postgres
+    docker compose up -d postgres
 
 # Stop test database
 db-down:
-    docker-compose down
+    docker compose down
 
 # Run all tests
 test: db
