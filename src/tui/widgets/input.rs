@@ -11,9 +11,9 @@ use ratatui::{
 };
 
 /// Input bar widget.
+#[allow(dead_code)] // Used for cursor positioning in ui.rs
 pub struct InputBar<'a> {
     text: &'a str,
-    #[allow(dead_code)] // Used for cursor positioning in ui.rs
     cursor: usize,
     focused: bool,
 }

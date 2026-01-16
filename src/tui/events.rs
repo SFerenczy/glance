@@ -12,7 +12,6 @@ pub enum Event {
     /// A key was pressed.
     Key(KeyEvent),
     /// The terminal was resized.
-    #[allow(dead_code)]
     Resize(u16, u16),
     /// A periodic tick (for animations/updates).
     Tick,

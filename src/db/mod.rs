@@ -20,7 +20,6 @@ use async_trait::async_trait;
 ///
 /// All database operations are async and return Results with GlanceError.
 #[async_trait]
-#[allow(dead_code)]
 pub trait DatabaseClient: Send + Sync {
     /// Connects to the database using the provided configuration.
     async fn connect(config: &ConnectionConfig) -> Result<Self>
