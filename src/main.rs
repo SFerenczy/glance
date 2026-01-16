@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod db;
 mod error;
+mod llm;
 mod safety;
 
 use cli::Cli;
