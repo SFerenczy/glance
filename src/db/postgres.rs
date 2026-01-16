@@ -28,7 +28,6 @@ const RETRY_BASE_DELAY_MS: u64 = 500;
 
 /// PostgreSQL database client.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct PostgresClient {
     pool: PgPool,
 }
@@ -163,7 +162,6 @@ impl DatabaseClient for PostgresClient {
     }
 }
 
-#[allow(dead_code)]
 impl PostgresClient {
     /// Fetches all tables from the public schema.
     async fn fetch_tables(&self) -> Result<Vec<Table>> {
@@ -357,7 +355,6 @@ impl PostgresClient {
 }
 
 /// Converts a sqlx PgRow to our Row type.
-#[allow(dead_code)]
 fn convert_row(row: &PgRow) -> Row {
     row.columns()
         .iter()
@@ -367,7 +364,6 @@ fn convert_row(row: &PgRow) -> Row {
 }
 
 /// Converts a single column value from a PgRow to our Value type.
-#[allow(dead_code)]
 fn convert_value(row: &PgRow, index: usize, type_name: &str) -> Value {
     // Try to get the value based on the type
     // We use a match on type name and try to decode appropriately

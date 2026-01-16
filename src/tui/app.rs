@@ -8,7 +8,6 @@ use std::time::Duration;
 
 /// Status of an executed query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum QueryStatus {
     /// Query executed successfully.
     Success,
@@ -31,7 +30,6 @@ pub struct QueryLogEntry {
     pub error: Option<String>,
 }
 
-#[allow(dead_code)]
 impl QueryLogEntry {
     /// Creates a new successful query log entry.
     pub fn success(sql: String, execution_time: Duration, row_count: usize) -> Self {
@@ -93,7 +91,6 @@ impl Focus {
 
 /// A message in the chat panel.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum ChatMessage {
     /// A message from the user.
     User(String),
@@ -279,7 +276,6 @@ impl App {
     }
 
     /// Adds a message to the chat.
-    #[allow(dead_code)]
     pub fn add_message(&mut self, message: ChatMessage) {
         self.messages.push(message);
         // Auto-scroll to bottom when new message is added
@@ -287,14 +283,12 @@ impl App {
     }
 
     /// Clears all chat messages.
-    #[allow(dead_code)]
     pub fn clear_messages(&mut self) {
         self.messages.clear();
         self.chat_scroll = 0;
     }
 
     /// Adds a query to the log.
-    #[allow(dead_code)]
     pub fn add_query_log(&mut self, entry: QueryLogEntry) {
         // Insert at the beginning (most recent first)
         self.query_log.insert(0, entry);
@@ -346,7 +340,6 @@ impl App {
 
     /// Returns the total number of lines needed to render all messages.
     /// This is used for scroll calculations.
-    #[allow(dead_code)]
     pub fn total_chat_lines(&self) -> usize {
         self.messages.iter().map(Self::message_line_count).sum()
     }
@@ -509,7 +502,6 @@ impl App {
     }
 
     /// Submits the current input for processing.
-    #[allow(dead_code)]
     pub fn submit_input(&mut self) -> Option<String> {
         if self.input.is_empty() {
             None

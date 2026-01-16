@@ -6,7 +6,6 @@ use thiserror::Error;
 
 /// Main error type for Glance operations.
 #[derive(Error, Debug)]
-#[allow(dead_code)] // Variants will be used in later phases
 pub enum GlanceError {
     /// Database connection errors (host unreachable, auth failed, etc.)
     #[error("Connection error: {0}")]
@@ -29,7 +28,6 @@ pub enum GlanceError {
     Internal(String),
 }
 
-#[allow(dead_code)] // Methods will be used in later phases
 impl GlanceError {
     /// Creates a connection error with the given message.
     pub fn connection(msg: impl Into<String>) -> Self {
