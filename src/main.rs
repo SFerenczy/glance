@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod db;
 mod error;
+mod safety;
 
 use cli::Cli;
 use config::{Config, ConnectionConfig};
