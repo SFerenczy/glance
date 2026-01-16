@@ -4,6 +4,72 @@
 
 use crate::config::ConnectionConfig;
 use crate::db::QueryResult;
+use std::time::Duration;
+
+/// Status of an executed query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum QueryStatus {
+    /// Query executed successfully.
+    Success,
+    /// Query failed with an error.
+    Error,
+}
+
+/// An entry in the query log.
+#[derive(Debug, Clone)]
+pub struct QueryLogEntry {
+    /// The SQL query that was executed.
+    pub sql: String,
+    /// Whether the query succeeded or failed.
+    pub status: QueryStatus,
+    /// How long the query took to execute.
+    pub execution_time: Duration,
+    /// Number of rows returned (for successful queries).
+    pub row_count: Option<usize>,
+    /// Error message (for failed queries).
+    pub error: Option<String>,
+}
+
+#[allow(dead_code)]
+impl QueryLogEntry {
+    /// Creates a new successful query log entry.
+    pub fn success(sql: String, execution_time: Duration, row_count: usize) -> Self {
+        Self {
+            sql,
+            status: QueryStatus::Success,
+            execution_time,
+            row_count: Some(row_count),
+            error: None,
+        }
+    }
+
+    /// Creates a new failed query log entry.
+    pub fn error(sql: String, execution_time: Duration, error: String) -> Self {
+        Self {
+            sql,
+            status: QueryStatus::Error,
+            execution_time,
+            row_count: None,
+            error: Some(error),
+        }
+    }
+
+    /// Returns a truncated preview of the SQL (first 30 chars).
+    pub fn sql_preview(&self, max_len: usize) -> &str {
+        let sql = self.sql.trim();
+        if sql.len() <= max_len {
+            sql
+        } else {
+            // Find a safe truncation point (don't split UTF-8)
+            let mut end = max_len;
+            while end > 0 && !sql.is_char_boundary(end) {
+                end -= 1;
+            }
+            &sql[..end]
+        }
+    }
+}
 
 /// Which panel currently has focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -137,10 +203,27 @@ pub struct App {
     pub messages: Vec<ChatMessage>,
     /// Chat scroll offset (lines from bottom).
     pub chat_scroll: usize,
-    /// Sidebar scroll offset.
-    pub sidebar_scroll: usize,
+    /// Query log entries.
+    pub query_log: Vec<QueryLogEntry>,
+    /// Currently selected query in sidebar (index into query_log).
+    pub selected_query: Option<usize>,
+    /// Whether the query detail modal is visible.
+    pub show_query_detail: bool,
     /// Database connection info for display.
     pub connection_info: Option<String>,
+    /// Pending query awaiting confirmation.
+    pub pending_query: Option<PendingQuery>,
+    /// Whether the application is currently processing (waiting for LLM/DB).
+    pub is_processing: bool,
+}
+
+/// A query that is pending user confirmation.
+#[derive(Debug, Clone)]
+pub struct PendingQuery {
+    /// The SQL to execute.
+    pub sql: String,
+    /// The safety classification of the query.
+    pub classification: crate::safety::ClassificationResult,
 }
 
 impl App {
@@ -159,9 +242,40 @@ impl App {
             input: InputState::new(),
             messages,
             chat_scroll: 0,
-            sidebar_scroll: 0,
+            query_log: Vec::new(),
+            selected_query: None,
+            show_query_detail: false,
             connection_info,
+            pending_query: None,
+            is_processing: false,
         }
+    }
+
+    /// Returns true if a confirmation dialog should be shown.
+    pub fn has_pending_query(&self) -> bool {
+        self.pending_query.is_some()
+    }
+
+    /// Sets a pending query that needs confirmation.
+    pub fn set_pending_query(
+        &mut self,
+        sql: String,
+        classification: crate::safety::ClassificationResult,
+    ) {
+        self.pending_query = Some(PendingQuery {
+            sql,
+            classification,
+        });
+    }
+
+    /// Clears the pending query.
+    pub fn clear_pending_query(&mut self) {
+        self.pending_query = None;
+    }
+
+    /// Takes the pending query, returning it and clearing the state.
+    pub fn take_pending_query(&mut self) -> Option<PendingQuery> {
+        self.pending_query.take()
     }
 
     /// Adds a message to the chat.
@@ -179,14 +293,62 @@ impl App {
         self.chat_scroll = 0;
     }
 
+    /// Adds a query to the log.
+    #[allow(dead_code)]
+    pub fn add_query_log(&mut self, entry: QueryLogEntry) {
+        // Insert at the beginning (most recent first)
+        self.query_log.insert(0, entry);
+        // Update selection to stay on the same item or select the new one
+        if self.selected_query.is_some() {
+            self.selected_query = self.selected_query.map(|i| i + 1);
+        }
+    }
+
+    /// Returns the currently selected query entry, if any.
+    pub fn selected_query_entry(&self) -> Option<&QueryLogEntry> {
+        self.selected_query.and_then(|i| self.query_log.get(i))
+    }
+
+    /// Moves selection up in the query log.
+    pub fn select_previous_query(&mut self) {
+        if self.query_log.is_empty() {
+            return;
+        }
+        self.selected_query = Some(match self.selected_query {
+            None => 0,
+            Some(i) => i.saturating_sub(1),
+        });
+    }
+
+    /// Moves selection down in the query log.
+    pub fn select_next_query(&mut self) {
+        if self.query_log.is_empty() {
+            return;
+        }
+        let max_index = self.query_log.len().saturating_sub(1);
+        self.selected_query = Some(match self.selected_query {
+            None => 0,
+            Some(i) => i.saturating_add(1).min(max_index),
+        });
+    }
+
+    /// Opens the query detail modal for the selected query.
+    pub fn open_query_detail(&mut self) {
+        if self.selected_query.is_some() {
+            self.show_query_detail = true;
+        }
+    }
+
+    /// Closes the query detail modal.
+    pub fn close_query_detail(&mut self) {
+        self.show_query_detail = false;
+    }
+
     /// Returns the total number of lines needed to render all messages.
     /// This is used for scroll calculations.
     #[allow(dead_code)]
     pub fn total_chat_lines(&self) -> usize {
-        self.messages
-            .iter()
-            .map(Self::message_line_count)
-            .sum()
+        self.messages.iter().map(Self::message_line_count).sum()
     }
 
     /// Estimates the number of lines a message will take to render.
@@ -260,12 +422,20 @@ impl App {
                         self.chat_scroll = 0;
                     }
 
-                    // Sidebar scrolling (when sidebar is focused)
+                    // Modal handling (Esc closes modal)
+                    KeyCode::Esc if self.show_query_detail => {
+                        self.close_query_detail();
+                    }
+
+                    // Sidebar navigation (when sidebar is focused)
                     KeyCode::Up if self.focus == Focus::Sidebar => {
-                        self.sidebar_scroll = self.sidebar_scroll.saturating_add(1);
+                        self.select_previous_query();
                     }
                     KeyCode::Down if self.focus == Focus::Sidebar => {
-                        self.sidebar_scroll = self.sidebar_scroll.saturating_sub(1);
+                        self.select_next_query();
+                    }
+                    KeyCode::Enter if self.focus == Focus::Sidebar => {
+                        self.open_query_detail();
                     }
 
                     _ => {}
@@ -468,5 +638,156 @@ mod tests {
         app.chat_scroll = 5;
         app.clear_messages();
         assert_eq!(app.chat_scroll, 0);
+    }
+
+    #[test]
+    fn test_query_log_entry_success() {
+        let entry = QueryLogEntry::success(
+            "SELECT * FROM users".to_string(),
+            Duration::from_millis(42),
+            10,
+        );
+        assert_eq!(entry.status, QueryStatus::Success);
+        assert_eq!(entry.row_count, Some(10));
+        assert!(entry.error.is_none());
+    }
+
+    #[test]
+    fn test_query_log_entry_error() {
+        let entry = QueryLogEntry::error(
+            "SELECT * FROM nonexistent".to_string(),
+            Duration::from_millis(5),
+            "relation does not exist".to_string(),
+        );
+        assert_eq!(entry.status, QueryStatus::Error);
+        assert!(entry.row_count.is_none());
+        assert_eq!(entry.error, Some("relation does not exist".to_string()));
+    }
+
+    #[test]
+    fn test_query_log_entry_sql_preview() {
+        let entry = QueryLogEntry::success(
+            "SELECT id, name, email FROM users WHERE active = true".to_string(),
+            Duration::from_millis(10),
+            5,
+        );
+        // Should truncate at 30 chars
+        assert_eq!(entry.sql_preview(30), "SELECT id, name, email FROM us");
+        // Short preview
+        assert_eq!(entry.sql_preview(10), "SELECT id,");
+        // Full text if under limit
+        let short_entry =
+            QueryLogEntry::success("SELECT 1".to_string(), Duration::from_millis(1), 1);
+        assert_eq!(short_entry.sql_preview(30), "SELECT 1");
+    }
+
+    #[test]
+    fn test_app_add_query_log() {
+        let mut app = App::new(None);
+        assert!(app.query_log.is_empty());
+
+        let entry1 = QueryLogEntry::success("SELECT 1".to_string(), Duration::from_millis(10), 1);
+        app.add_query_log(entry1);
+        assert_eq!(app.query_log.len(), 1);
+
+        let entry2 = QueryLogEntry::success("SELECT 2".to_string(), Duration::from_millis(20), 1);
+        app.add_query_log(entry2);
+        assert_eq!(app.query_log.len(), 2);
+        // Most recent should be first
+        assert_eq!(app.query_log[0].sql, "SELECT 2");
+        assert_eq!(app.query_log[1].sql, "SELECT 1");
+    }
+
+    #[test]
+    fn test_app_query_selection_navigation() {
+        let mut app = App::new(None);
+
+        // Add some queries
+        app.add_query_log(QueryLogEntry::success(
+            "Q1".to_string(),
+            Duration::from_millis(1),
+            1,
+        ));
+        app.add_query_log(QueryLogEntry::success(
+            "Q2".to_string(),
+            Duration::from_millis(1),
+            1,
+        ));
+        app.add_query_log(QueryLogEntry::success(
+            "Q3".to_string(),
+            Duration::from_millis(1),
+            1,
+        ));
+
+        // Initially no selection
+        assert!(app.selected_query.is_none());
+
+        // Select first (most recent)
+        app.select_next_query();
+        assert_eq!(app.selected_query, Some(0));
+
+        // Move down
+        app.select_next_query();
+        assert_eq!(app.selected_query, Some(1));
+
+        // Move up
+        app.select_previous_query();
+        assert_eq!(app.selected_query, Some(0));
+
+        // Can't go above 0
+        app.select_previous_query();
+        assert_eq!(app.selected_query, Some(0));
+
+        // Move to last
+        app.select_next_query();
+        app.select_next_query();
+        assert_eq!(app.selected_query, Some(2));
+
+        // Can't go past last
+        app.select_next_query();
+        assert_eq!(app.selected_query, Some(2));
+    }
+
+    #[test]
+    fn test_app_query_detail_modal() {
+        let mut app = App::new(None);
+        app.add_query_log(QueryLogEntry::success(
+            "SELECT 1".to_string(),
+            Duration::from_millis(1),
+            1,
+        ));
+
+        // Can't open modal without selection
+        assert!(!app.show_query_detail);
+        app.open_query_detail();
+        assert!(!app.show_query_detail);
+
+        // Select and open
+        app.select_next_query();
+        app.open_query_detail();
+        assert!(app.show_query_detail);
+
+        // Close
+        app.close_query_detail();
+        assert!(!app.show_query_detail);
+    }
+
+    #[test]
+    fn test_app_selected_query_entry() {
+        let mut app = App::new(None);
+        app.add_query_log(QueryLogEntry::success(
+            "SELECT 1".to_string(),
+            Duration::from_millis(1),
+            1,
+        ));
+
+        // No selection
+        assert!(app.selected_query_entry().is_none());
+
+        // With selection
+        app.selected_query = Some(0);
+        let entry = app.selected_query_entry();
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().sql, "SELECT 1");
     }
 }

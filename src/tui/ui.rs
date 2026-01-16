@@ -3,7 +3,7 @@
 //! Defines the layout and renders all UI components.
 
 use super::app::{App, Focus};
-use super::widgets::{chat, header, input, sidebar};
+use super::widgets::{chat, confirm, header, input, query_detail, sidebar};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     Frame,
@@ -44,6 +44,19 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_chat(frame, chat_area, app);
     render_sidebar(frame, sidebar_area, app);
     render_input(frame, input_area, app);
+
+    // Render modal overlay if query detail is shown
+    if app.show_query_detail {
+        if let Some(entry) = app.selected_query_entry() {
+            let modal = query_detail::QueryDetailModal::new(entry);
+            frame.render_widget(modal, area);
+        }
+    }
+
+    // Render confirmation dialog if there's a pending query
+    if let Some(pending) = &app.pending_query {
+        confirm::render_confirmation_dialog(frame, &pending.sql, &pending.classification);
+    }
 }
 
 /// Renders the header bar.
@@ -62,7 +75,7 @@ fn render_chat(frame: &mut Frame, area: Rect, app: &App) {
 /// Renders the sidebar.
 fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.focus == Focus::Sidebar;
-    let widget = sidebar::Sidebar::new(focused);
+    let widget = sidebar::Sidebar::new(&app.query_log, app.selected_query, focused);
     frame.render_widget(widget, area);
 }
 

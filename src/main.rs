@@ -1,5 +1,6 @@
 //! Glance - A lightweight, AI-first database viewer.
 
+mod app;
 mod cli;
 mod config;
 mod db;
@@ -11,10 +12,12 @@ mod tui;
 use cli::Cli;
 use config::{Config, ConnectionConfig};
 use error::{GlanceError, Result};
+use llm::LlmProvider;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -22,13 +25,13 @@ fn main() {
         )
         .init();
 
-    if let Err(e) = run() {
+    if let Err(e) = run().await {
         error!("{}: {}", e.category(), e);
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<()> {
+async fn run() -> Result<()> {
     // Parse CLI arguments
     let cli = Cli::parse_args();
 
@@ -47,16 +50,20 @@ fn run() -> Result<()> {
     match connection {
         Some(ref conn) => {
             info!("Connection: {}", conn.display_string());
-            // TODO: Initialize database connection
-            // TODO: Initialize LLM client
+
+            // Determine LLM provider from config
+            let llm_provider =
+                LlmProvider::from_str(&config.llm.provider).unwrap_or(LlmProvider::OpenAi);
+
+            // Run with full orchestrator integration
+            tui::run_async(conn, llm_provider).await?;
         }
         None => {
-            warn!("No database connection configured");
+            warn!("No database connection configured. Running in limited mode.");
+            // Run without orchestrator (limited functionality)
+            tui::run(None)?;
         }
     }
-
-    // Start TUI
-    tui::run(connection.as_ref())?;
 
     Ok(())
 }
