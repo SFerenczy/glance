@@ -6,6 +6,7 @@ mod db;
 mod error;
 mod llm;
 mod safety;
+mod tui;
 
 use cli::Cli;
 use config::{Config, ConnectionConfig};
@@ -44,20 +45,18 @@ fn run() -> Result<()> {
     let connection = resolve_connection(&cli, &config)?;
 
     match connection {
-        Some(conn) => {
+        Some(ref conn) => {
             info!("Connection: {}", conn.display_string());
             // TODO: Initialize database connection
             // TODO: Initialize LLM client
-            // TODO: Start TUI
-            println!("Glance v0.1.0");
-            println!("Would connect to: {}", conn.display_string());
         }
         None => {
             warn!("No database connection configured");
-            println!("Glance v0.1.0");
-            println!("No database connection configured. Use --help for usage information.");
         }
     }
+
+    // Start TUI
+    tui::run(connection.as_ref())?;
 
     Ok(())
 }
