@@ -3,6 +3,7 @@
 //! Contains the main App struct and related types for managing UI state.
 
 use crate::config::ConnectionConfig;
+use crate::db::QueryResult;
 
 /// Which panel currently has focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -20,6 +21,36 @@ impl Focus {
             Self::Input => Self::Chat,
             Self::Chat => Self::Sidebar,
             Self::Sidebar => Self::Input,
+        }
+    }
+}
+
+/// A message in the chat panel.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum ChatMessage {
+    /// A message from the user.
+    User(String),
+    /// A response from the assistant.
+    Assistant(String),
+    /// A query result to display as a table.
+    Result(QueryResult),
+    /// An error message.
+    Error(String),
+    /// A system message (e.g., schema display, help text).
+    System(String),
+}
+
+#[allow(dead_code)]
+impl ChatMessage {
+    /// Returns the message type as a string for display purposes.
+    pub fn type_label(&self) -> &'static str {
+        match self {
+            Self::User(_) => "You",
+            Self::Assistant(_) => "Glance",
+            Self::Result(_) => "Result",
+            Self::Error(_) => "Error",
+            Self::System(_) => "System",
         }
     }
 }
@@ -102,6 +133,8 @@ pub struct App {
     pub focus: Focus,
     /// Input field state.
     pub input: InputState,
+    /// Chat messages.
+    pub messages: Vec<ChatMessage>,
     /// Chat scroll offset (lines from bottom).
     pub chat_scroll: usize,
     /// Sidebar scroll offset.
@@ -115,13 +148,61 @@ impl App {
     pub fn new(connection: Option<&ConnectionConfig>) -> Self {
         let connection_info = connection.map(|c| c.display_string());
 
+        // Add welcome message
+        let messages = vec![ChatMessage::System(
+            "Welcome to Glance! Ask questions about your database in natural language.".to_string(),
+        )];
+
         Self {
             running: true,
             focus: Focus::default(),
             input: InputState::new(),
+            messages,
             chat_scroll: 0,
             sidebar_scroll: 0,
             connection_info,
+        }
+    }
+
+    /// Adds a message to the chat.
+    #[allow(dead_code)]
+    pub fn add_message(&mut self, message: ChatMessage) {
+        self.messages.push(message);
+        // Auto-scroll to bottom when new message is added
+        self.chat_scroll = 0;
+    }
+
+    /// Clears all chat messages.
+    #[allow(dead_code)]
+    pub fn clear_messages(&mut self) {
+        self.messages.clear();
+        self.chat_scroll = 0;
+    }
+
+    /// Returns the total number of lines needed to render all messages.
+    /// This is used for scroll calculations.
+    #[allow(dead_code)]
+    pub fn total_chat_lines(&self) -> usize {
+        self.messages
+            .iter()
+            .map(Self::message_line_count)
+            .sum()
+    }
+
+    /// Estimates the number of lines a message will take to render.
+    fn message_line_count(message: &ChatMessage) -> usize {
+        match message {
+            ChatMessage::User(text)
+            | ChatMessage::Assistant(text)
+            | ChatMessage::System(text)
+            | ChatMessage::Error(text) => {
+                // Label line + content lines (rough estimate: 1 line per 80 chars)
+                1 + text.len().div_ceil(80).max(1)
+            }
+            ChatMessage::Result(result) => {
+                // Header + column headers + separator + rows + footer
+                3 + result.rows.len() + 2
+            }
         }
     }
 
@@ -337,5 +418,55 @@ mod tests {
         assert_eq!(app.focus, Focus::Input);
         assert!(app.input.is_empty());
         assert!(app.connection_info.is_none());
+        // Should have welcome message
+        assert_eq!(app.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_app_add_message() {
+        let mut app = App::new(None);
+        app.add_message(ChatMessage::User("Hello".to_string()));
+        assert_eq!(app.messages.len(), 2);
+        app.add_message(ChatMessage::Assistant("Hi there!".to_string()));
+        assert_eq!(app.messages.len(), 3);
+    }
+
+    #[test]
+    fn test_app_clear_messages() {
+        let mut app = App::new(None);
+        app.add_message(ChatMessage::User("Hello".to_string()));
+        app.clear_messages();
+        assert!(app.messages.is_empty());
+    }
+
+    #[test]
+    fn test_chat_message_type_label() {
+        assert_eq!(ChatMessage::User("test".to_string()).type_label(), "You");
+        assert_eq!(
+            ChatMessage::Assistant("test".to_string()).type_label(),
+            "Glance"
+        );
+        assert_eq!(ChatMessage::Error("test".to_string()).type_label(), "Error");
+        assert_eq!(
+            ChatMessage::System("test".to_string()).type_label(),
+            "System"
+        );
+    }
+
+    #[test]
+    fn test_chat_scroll_reset_on_new_message() {
+        let mut app = App::new(None);
+        app.chat_scroll = 5;
+        app.add_message(ChatMessage::User("Hello".to_string()));
+        // Scroll should reset to 0 (bottom) when new message added
+        assert_eq!(app.chat_scroll, 0);
+    }
+
+    #[test]
+    fn test_chat_scroll_reset_on_clear() {
+        let mut app = App::new(None);
+        app.chat_scroll = 5;
+        app.clear_messages();
+        assert_eq!(app.chat_scroll, 0);
     }
 }
