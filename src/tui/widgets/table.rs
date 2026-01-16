@@ -228,6 +228,8 @@ mod tests {
             ],
             execution_time: Duration::from_millis(23),
             row_count: 2,
+            total_rows: Some(2),
+            was_truncated: false,
         }
     }
 

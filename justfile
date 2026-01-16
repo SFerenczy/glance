@@ -1,43 +1,40 @@
 # Glance development commands
 
 # Start test database
-db: 
+db:
     docker compose up -d postgres
 
 # Stop test database
-db-down: 
+db-down:
     docker compose down
 
 # Run all tests
-test:
-    db
+test: db
     cargo test
 
 # Run tests with Ollama integration
-test-integration:
-    db
+test-integration: db
     OLLAMA_AVAILABLE=1 cargo test
 
 # Format and lint
-check: 
+check:
     cargo fmt --check
     cargo clippy -- -D warnings
 
 # Format code
-fmt: 
+fmt:
     cargo fmt
 
 # Run the application
-run: 
+run:
     cargo run
 
 # Run with test database
-dev: 
-    db
+dev: db
     DATABASE_URL="postgres://glance:glance@localhost:5432/glance_test" cargo run
 
 # Build release binary
-build: 
+build:
     cargo build --release
 
 # Clean build artifacts
@@ -53,6 +50,6 @@ db-logs:
     docker compose logs -f postgres
 
 # Reset database (stop, remove volume, restart)
-db-reset: 
+db-reset:
     docker compose down -v
     docker compose up -d postgres

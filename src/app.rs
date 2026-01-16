@@ -96,6 +96,7 @@ impl Orchestrator {
                 use crate::llm::OllamaClient;
                 Box::new(OllamaClient::from_env()?)
             }
+            LlmProvider::Mock => Box::new(MockLlmClient::new()),
         };
 
         Ok(Self {
@@ -296,6 +297,14 @@ impl Orchestrator {
     /// Cancels a pending query.
     pub fn cancel_query(&self) -> ChatMessage {
         ChatMessage::System("Query cancelled.".to_string())
+    }
+
+    /// Closes the database connection and cleans up resources.
+    pub async fn close(&mut self) -> Result<()> {
+        if let Some(db) = self.db.take() {
+            db.close().await?;
+        }
+        Ok(())
     }
 }
 

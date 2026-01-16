@@ -12,14 +12,19 @@ use async_trait::async_trait;
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column as SqlxColumn, Row as SqlxRow, TypeInfo};
 use std::time::{Duration, Instant};
+use tracing::{debug, warn};
 
 /// Query timeout in seconds.
-#[allow(dead_code)]
 const QUERY_TIMEOUT_SECS: u64 = 30;
 
 /// Maximum rows to return from a query.
-#[allow(dead_code)]
 const MAX_ROWS: usize = 1000;
+
+/// Maximum number of connection retry attempts.
+const MAX_RETRY_ATTEMPTS: u32 = 3;
+
+/// Base delay between retry attempts (doubles each retry).
+const RETRY_BASE_DELAY_MS: u64 = 500;
 
 /// PostgreSQL database client.
 #[derive(Debug)]
@@ -43,14 +48,44 @@ impl DatabaseClient for PostgresClient {
     async fn connect(config: &ConnectionConfig) -> Result<Self> {
         let conn_str = config.to_connection_string()?;
 
-        let pool = PgPoolOptions::new()
-            .max_connections(5)
-            .acquire_timeout(Duration::from_secs(10))
-            .connect(&conn_str)
-            .await
-            .map_err(|e| map_connection_error(e, config))?;
+        let mut last_error = None;
+        let mut delay = Duration::from_millis(RETRY_BASE_DELAY_MS);
 
-        Ok(Self { pool })
+        for attempt in 1..=MAX_RETRY_ATTEMPTS {
+            debug!("Connection attempt {} of {}", attempt, MAX_RETRY_ATTEMPTS);
+
+            let result = PgPoolOptions::new()
+                .max_connections(5)
+                .acquire_timeout(Duration::from_secs(10))
+                .connect(&conn_str)
+                .await;
+
+            match result {
+                Ok(pool) => {
+                    debug!("Successfully connected to database");
+                    return Ok(Self { pool });
+                }
+                Err(e) => {
+                    let is_transient = is_transient_error(&e);
+                    last_error = Some(e);
+
+                    if attempt < MAX_RETRY_ATTEMPTS && is_transient {
+                        warn!(
+                            "Connection attempt {} failed (transient error), retrying in {:?}",
+                            attempt, delay
+                        );
+                        tokio::time::sleep(delay).await;
+                        delay *= 2; // Exponential backoff
+                    }
+                }
+            }
+        }
+
+        // All retries exhausted
+        Err(map_connection_error(
+            last_error.expect("at least one attempt was made"),
+            config,
+        ))
     }
 
     async fn introspect_schema(&self) -> Result<Schema> {
@@ -96,6 +131,17 @@ impl DatabaseClient for PostgresClient {
             })
             .unwrap_or_default();
 
+        // Check if result set exceeds MAX_ROWS
+        let total_rows = result.len();
+        let was_truncated = total_rows > MAX_ROWS;
+
+        if was_truncated {
+            warn!(
+                "Query returned {} rows, truncating to {} rows",
+                total_rows, MAX_ROWS
+            );
+        }
+
         // Convert rows, limiting to MAX_ROWS
         let rows: Vec<Row> = result.iter().take(MAX_ROWS).map(convert_row).collect();
 
@@ -106,6 +152,8 @@ impl DatabaseClient for PostgresClient {
             rows,
             execution_time,
             row_count,
+            total_rows: Some(total_rows),
+            was_truncated,
         })
     }
 
@@ -383,8 +431,36 @@ fn convert_value(row: &PgRow, index: usize, type_name: &str) -> Value {
     }
 }
 
-/// Maps sqlx connection errors to user-friendly messages.
-#[allow(dead_code)]
+/// Determines if an error is transient and worth retrying.
+fn is_transient_error(error: &sqlx::Error) -> bool {
+    let error_str = error.to_string().to_lowercase();
+
+    // Connection refused or timeout are often transient
+    if error_str.contains("connection refused")
+        || error_str.contains("timed out")
+        || error_str.contains("timeout")
+        || error_str.contains("temporarily unavailable")
+        || error_str.contains("connection reset")
+        || error_str.contains("broken pipe")
+    {
+        return true;
+    }
+
+    // Authentication and database-not-found errors are not transient
+    if error_str.contains("password authentication failed")
+        || error_str.contains("authentication failed")
+        || error_str.contains("does not exist")
+        || error_str.contains("ssl")
+        || error_str.contains("tls")
+    {
+        return false;
+    }
+
+    // Default to not retrying unknown errors
+    false
+}
+
+/// Maps sqlx connection errors to user-friendly messages per FR-1.4.
 fn map_connection_error(error: sqlx::Error, config: &ConnectionConfig) -> GlanceError {
     let host = config.host.as_deref().unwrap_or("localhost");
     let port = config.port;
@@ -409,16 +485,64 @@ fn map_connection_error(error: sqlx::Error, config: &ConnectionConfig) -> Glance
         GlanceError::connection(
             "Server requires SSL. Add '?sslmode=require' to connection string.".to_string(),
         )
+    } else if error_str.contains("timed out") || error_str.contains("timeout") {
+        GlanceError::connection(format!(
+            "Connection to {host}:{port} timed out. The server may be overloaded or unreachable."
+        ))
     } else {
         GlanceError::connection(error.to_string())
     }
 }
 
 /// Formats a query error with hints if available.
-#[allow(dead_code)]
 fn format_query_error(error: sqlx::Error) -> String {
-    // sqlx errors already include good formatting, but we can enhance if needed
-    error.to_string()
+    let error_str = error.to_string();
+
+    // Parse PostgreSQL error format to extract useful information
+    // PostgreSQL errors often have format: "ERROR: message\nDETAIL: ...\nHINT: ..."
+    let mut result = String::new();
+
+    // Extract the main error message
+    if let Some(db_error) = error.as_database_error() {
+        result.push_str("ERROR: ");
+        result.push_str(db_error.message());
+
+        // Try to downcast to PgDatabaseError for Postgres-specific fields
+        if let Some(pg_error) = db_error.try_downcast_ref::<sqlx::postgres::PgDatabaseError>() {
+            // Add detail if available
+            if let Some(detail) = pg_error.detail() {
+                result.push_str("\n  DETAIL: ");
+                result.push_str(detail);
+            }
+
+            // Add hint if available
+            if let Some(hint) = pg_error.hint() {
+                result.push_str("\n  HINT: ");
+                result.push_str(hint);
+            }
+
+            // Add position/context if available
+            if let Some(table) = pg_error.table() {
+                result.push_str("\n  TABLE: ");
+                result.push_str(table);
+            }
+
+            if let Some(column) = pg_error.column() {
+                result.push_str("\n  COLUMN: ");
+                result.push_str(column);
+            }
+
+            if let Some(constraint) = pg_error.constraint() {
+                result.push_str("\n  CONSTRAINT: ");
+                result.push_str(constraint);
+            }
+        }
+    } else {
+        // Fallback for non-database errors
+        result = error_str;
+    }
+
+    result
 }
 
 #[cfg(test)]

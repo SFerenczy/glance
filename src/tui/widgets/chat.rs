@@ -247,6 +247,8 @@ mod tests {
             rows: vec![vec![Value::Int(1)]],
             execution_time: Duration::from_millis(10),
             row_count: 1,
+            total_rows: Some(1),
+            was_truncated: false,
         };
         let messages = vec![ChatMessage::Result(result)];
         let panel = ChatPanel::new(&messages, 0, false);

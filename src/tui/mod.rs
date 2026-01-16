@@ -24,8 +24,10 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, Stdout};
 use std::panic;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Messages sent from the async task to the main loop.
 #[derive(Debug)]
@@ -41,6 +43,8 @@ pub enum AsyncMessage {
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     event_handler: EventHandler,
+    /// Flag to signal cancellation of pending operations.
+    shutdown_flag: Arc<AtomicBool>,
 }
 
 impl Tui {
@@ -52,7 +56,23 @@ impl Tui {
         Ok(Self {
             terminal,
             event_handler,
+            shutdown_flag: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Returns a clone of the shutdown flag for use in async tasks.
+    pub fn shutdown_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.shutdown_flag)
+    }
+
+    /// Signals shutdown to all pending operations.
+    pub fn signal_shutdown(&self) {
+        self.shutdown_flag.store(true, Ordering::SeqCst);
+    }
+
+    /// Checks if shutdown has been signaled.
+    pub fn is_shutdown(&self) -> bool {
+        self.shutdown_flag.load(Ordering::SeqCst)
     }
 
     /// Sets up the terminal for TUI rendering.
@@ -129,7 +149,11 @@ impl Tui {
     ) -> Result<()> {
         // Set up panic hook to restore terminal on panic
         let original_hook = panic::take_hook();
+        let shutdown_flag = self.shutdown_flag();
         panic::set_hook(Box::new(move |panic_info| {
+            // Signal shutdown to cancel any pending operations
+            shutdown_flag.store(true, Ordering::SeqCst);
+            // Restore terminal state
             let _ = disable_raw_mode();
             let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
             original_hook(panic_info);
@@ -140,13 +164,39 @@ impl Tui {
         // Channel for async messages
         let (tx, mut rx) = mpsc::channel::<AsyncMessage>(32);
 
+        let result = self
+            .run_event_loop(&mut app_state, &mut orchestrator, tx, &mut rx)
+            .await;
+
+        // Cleanup: signal shutdown and close resources
+        self.signal_shutdown();
+
+        // Close database connection gracefully
+        if let Err(e) = orchestrator.close().await {
+            warn!("Error closing database connection: {}", e);
+        }
+
+        // Restore panic hook
+        let _ = panic::take_hook();
+
+        result
+    }
+
+    /// The main event loop, separated for cleaner error handling.
+    async fn run_event_loop(
+        &mut self,
+        app_state: &mut App,
+        orchestrator: &mut Orchestrator,
+        tx: mpsc::Sender<AsyncMessage>,
+        rx: &mut mpsc::Receiver<AsyncMessage>,
+    ) -> Result<()> {
         loop {
             // Draw the UI
             self.terminal
-                .draw(|frame| ui::render(frame, &app_state))
+                .draw(|frame| ui::render(frame, app_state))
                 .map_err(|e| GlanceError::internal(format!("Failed to draw: {e}")))?;
 
-            if !app_state.running {
+            if !app_state.running || self.is_shutdown() {
                 break;
             }
 
@@ -166,8 +216,8 @@ impl Tui {
                     if let Ok(Some(event)) = event_result {
                         self.handle_crossterm_event(
                             event,
-                            &mut app_state,
-                            &mut orchestrator,
+                            app_state,
+                            orchestrator,
                             tx.clone(),
                         ).await;
                     }
@@ -175,13 +225,10 @@ impl Tui {
 
                 // Handle async messages from background tasks
                 Some(msg) = rx.recv() => {
-                    self.handle_async_message(msg, &mut app_state);
+                    self.handle_async_message(msg, app_state);
                 }
             }
         }
-
-        // Restore panic hook
-        let _ = panic::take_hook();
 
         Ok(())
     }

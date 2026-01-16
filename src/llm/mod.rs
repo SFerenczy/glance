@@ -55,6 +55,8 @@ pub enum LlmProvider {
     Anthropic,
     /// Local Ollama instance
     Ollama,
+    /// Mock client for testing (no API key required)
+    Mock,
 }
 
 impl LlmProvider {
@@ -64,6 +66,7 @@ impl LlmProvider {
             "openai" => Some(Self::OpenAi),
             "anthropic" => Some(Self::Anthropic),
             "ollama" => Some(Self::Ollama),
+            "mock" => Some(Self::Mock),
             _ => None,
         }
     }
@@ -74,6 +77,7 @@ impl LlmProvider {
             Self::OpenAi => "openai",
             Self::Anthropic => "anthropic",
             Self::Ollama => "ollama",
+            Self::Mock => "mock",
         }
     }
 }

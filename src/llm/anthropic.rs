@@ -8,6 +8,7 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tracing::{debug, warn};
 
 use crate::error::{GlanceError, Result};
 use crate::llm::types::{Message, Role};
@@ -24,6 +25,12 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Maximum tokens to generate.
 const DEFAULT_MAX_TOKENS: u32 = 4096;
+
+/// Maximum number of retry attempts for transient errors.
+const MAX_RETRY_ATTEMPTS: u32 = 3;
+
+/// Base delay for exponential backoff (milliseconds).
+const RETRY_BASE_DELAY_MS: u64 = 1000;
 
 /// Anthropic client configuration.
 #[derive(Debug, Clone)]
@@ -123,25 +130,45 @@ impl AnthropicClient {
         (system, converted)
     }
 
-    /// Parses an API error response.
-    fn parse_error(status: reqwest::StatusCode, body: &str) -> GlanceError {
+    /// Parses an API error response and returns (error, is_retryable).
+    fn parse_error(status: reqwest::StatusCode, body: &str) -> (GlanceError, bool) {
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            return GlanceError::llm("Authentication failed. Check your ANTHROPIC_API_KEY.");
+            return (
+                GlanceError::llm("Authentication failed. Check your ANTHROPIC_API_KEY."),
+                false,
+            );
         }
 
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return GlanceError::llm("Rate limited. Please wait and try again.");
+            return (
+                GlanceError::llm("Rate limited. Please wait and try again."),
+                true, // Rate limits are retryable
+            );
         }
+
+        // 5xx errors are generally retryable
+        let is_retryable = status.is_server_error();
 
         // Try to parse error message from response
         if let Ok(error_response) = serde_json::from_str::<AnthropicErrorResponse>(body) {
-            return GlanceError::llm(format!(
-                "Anthropic API error: {}",
-                error_response.error.message
-            ));
+            return (
+                GlanceError::llm(format!(
+                    "Anthropic API error: {}",
+                    error_response.error.message
+                )),
+                is_retryable,
+            );
         }
 
-        GlanceError::llm(format!("Anthropic API error ({}): {}", status, body))
+        (
+            GlanceError::llm(format!("Anthropic API error ({}): {}", status, body)),
+            is_retryable,
+        )
+    }
+
+    /// Determines if a request error is retryable.
+    fn is_retryable_request_error(error: &reqwest::Error) -> bool {
+        error.is_timeout() || error.is_connect()
     }
 }
 
@@ -158,57 +185,94 @@ impl LlmClient for AnthropicClient {
             stream: false,
         };
 
-        let response = self
-            .client
-            .post(ANTHROPIC_API_URL)
-            .header("x-api-key", &self.config.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    GlanceError::llm("Request timed out. Try again.")
-                } else if e.is_connect() {
-                    GlanceError::llm("Failed to connect to Anthropic API. Check your network.")
-                } else {
-                    GlanceError::llm(format!("Request failed: {}", e))
+        let mut last_error = None;
+        let mut delay = Duration::from_millis(RETRY_BASE_DELAY_MS);
+
+        for attempt in 1..=MAX_RETRY_ATTEMPTS {
+            debug!("Anthropic API request attempt {} of {}", attempt, MAX_RETRY_ATTEMPTS);
+
+            let result = self
+                .client
+                .post(ANTHROPIC_API_URL)
+                .header("x-api-key", &self.config.api_key)
+                .header("anthropic-version", ANTHROPIC_VERSION)
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await;
+
+            match result {
+                Ok(response) => {
+                    let status = response.status();
+                    let body = response
+                        .text()
+                        .await
+                        .map_err(|e| GlanceError::llm(format!("Failed to read response: {}", e)))?;
+
+                    if status.is_success() {
+                        let response: AnthropicResponse = serde_json::from_str(&body)
+                            .map_err(|e| GlanceError::llm(format!("Failed to parse response: {}", e)))?;
+
+                        // Extract text from content blocks
+                        let text = response
+                            .content
+                            .into_iter()
+                            .filter_map(|block| {
+                                if block.content_type == "text" {
+                                    Some(block.text)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("");
+
+                        if text.is_empty() {
+                            return Err(GlanceError::llm("No response from Anthropic"));
+                        }
+
+                        return Ok(text);
+                    }
+
+                    let (error, is_retryable) = Self::parse_error(status, &body);
+                    last_error = Some(error);
+
+                    if !is_retryable || attempt >= MAX_RETRY_ATTEMPTS {
+                        break;
+                    }
+
+                    warn!(
+                        "Anthropic API request failed (attempt {}), retrying in {:?}: {}",
+                        attempt, delay, status
+                    );
                 }
-            })?;
+                Err(e) => {
+                    let is_retryable = Self::is_retryable_request_error(&e);
+                    let error = if e.is_timeout() {
+                        GlanceError::llm("Request timed out. Try again.")
+                    } else if e.is_connect() {
+                        GlanceError::llm("Failed to connect to Anthropic API. Check your network.")
+                    } else {
+                        GlanceError::llm(format!("Request failed: {}", e))
+                    };
+                    last_error = Some(error);
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| GlanceError::llm(format!("Failed to read response: {}", e)))?;
+                    if !is_retryable || attempt >= MAX_RETRY_ATTEMPTS {
+                        break;
+                    }
 
-        if !status.is_success() {
-            return Err(Self::parse_error(status, &body));
+                    warn!(
+                        "Anthropic API request failed (attempt {}), retrying in {:?}",
+                        attempt, delay
+                    );
+                }
+            }
+
+            tokio::time::sleep(delay).await;
+            delay *= 2; // Exponential backoff
         }
 
-        let response: AnthropicResponse = serde_json::from_str(&body)
-            .map_err(|e| GlanceError::llm(format!("Failed to parse response: {}", e)))?;
-
-        // Extract text from content blocks
-        let text = response
-            .content
-            .into_iter()
-            .filter_map(|block| {
-                if block.content_type == "text" {
-                    Some(block.text)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("");
-
-        if text.is_empty() {
-            return Err(GlanceError::llm("No response from Anthropic"));
-        }
-
-        Ok(text)
+        Err(last_error.expect("at least one attempt was made"))
     }
 
     async fn complete_stream(
@@ -248,7 +312,8 @@ impl LlmClient for AnthropicClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(Self::parse_error(status, &body));
+            let (error, _) = Self::parse_error(status, &body);
+            return Err(error);
         }
 
         let stream = response.bytes_stream();
@@ -427,21 +492,29 @@ mod tests {
 
     #[test]
     fn test_parse_error_unauthorized() {
-        let error = AnthropicClient::parse_error(reqwest::StatusCode::UNAUTHORIZED, "");
+        let (error, is_retryable) = AnthropicClient::parse_error(reqwest::StatusCode::UNAUTHORIZED, "");
         assert!(error.to_string().contains("Authentication failed"));
+        assert!(!is_retryable);
     }
 
     #[test]
     fn test_parse_error_rate_limited() {
-        let error = AnthropicClient::parse_error(reqwest::StatusCode::TOO_MANY_REQUESTS, "");
+        let (error, is_retryable) = AnthropicClient::parse_error(reqwest::StatusCode::TOO_MANY_REQUESTS, "");
         assert!(error.to_string().contains("Rate limited"));
+        assert!(is_retryable);
     }
 
     #[test]
     fn test_parse_error_with_message() {
         let body = r#"{"error":{"message":"Invalid API key"}}"#;
-        let error = AnthropicClient::parse_error(reqwest::StatusCode::BAD_REQUEST, body);
+        let (error, _) = AnthropicClient::parse_error(reqwest::StatusCode::BAD_REQUEST, body);
         assert!(error.to_string().contains("Invalid API key"));
+    }
+
+    #[test]
+    fn test_parse_error_server_error_is_retryable() {
+        let (_, is_retryable) = AnthropicClient::parse_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "");
+        assert!(is_retryable);
     }
 
     #[test]
