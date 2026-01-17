@@ -17,15 +17,22 @@ pub struct ChatPanel<'a> {
     messages: &'a [ChatMessage],
     scroll_offset: usize,
     focused: bool,
+    has_new_messages: bool,
 }
 
 impl<'a> ChatPanel<'a> {
     /// Creates a new chat panel widget.
-    pub fn new(messages: &'a [ChatMessage], scroll_offset: usize, focused: bool) -> Self {
+    pub fn new(
+        messages: &'a [ChatMessage],
+        scroll_offset: usize,
+        focused: bool,
+        has_new_messages: bool,
+    ) -> Self {
         Self {
             messages,
             scroll_offset,
             focused,
+            has_new_messages,
         }
     }
 
@@ -203,6 +210,23 @@ impl Widget for ChatPanel<'_> {
             .wrap(Wrap { trim: false });
 
         paragraph.render(area, buf);
+
+        // Show "new messages" indicator if scrolled up and there are new messages
+        if self.has_new_messages && self.scroll_offset > 0 {
+            let indicator = "↓ New messages ↓";
+            let x = area.x + (area.width.saturating_sub(indicator.len() as u16)) / 2;
+            let y = area.y + area.height - 1;
+            if y > area.y {
+                buf.set_string(
+                    x,
+                    y,
+                    indicator,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
+        }
     }
 }
 
@@ -215,7 +239,7 @@ mod tests {
     #[test]
     fn test_chat_panel_empty() {
         let messages: Vec<ChatMessage> = vec![];
-        let panel = ChatPanel::new(&messages, 0, false);
+        let panel = ChatPanel::new(&messages, 0, false, false);
         let lines = panel.render_messages(80);
         assert!(lines.is_empty());
     }
@@ -223,7 +247,7 @@ mod tests {
     #[test]
     fn test_chat_panel_user_message() {
         let messages = vec![ChatMessage::User("Hello".to_string())];
-        let panel = ChatPanel::new(&messages, 0, false);
+        let panel = ChatPanel::new(&messages, 0, false, false);
         let lines = panel.render_messages(80);
 
         // Should have label + content
@@ -233,7 +257,7 @@ mod tests {
     #[test]
     fn test_chat_panel_multiline_message() {
         let messages = vec![ChatMessage::User("Line 1\nLine 2\nLine 3".to_string())];
-        let panel = ChatPanel::new(&messages, 0, false);
+        let panel = ChatPanel::new(&messages, 0, false, false);
         let lines = panel.render_messages(80);
 
         // Should have label + 3 content lines
@@ -251,7 +275,7 @@ mod tests {
             was_truncated: false,
         };
         let messages = vec![ChatMessage::Result(result)];
-        let panel = ChatPanel::new(&messages, 0, false);
+        let panel = ChatPanel::new(&messages, 0, false, false);
         let lines = panel.render_messages(80);
 
         // Should have table lines
@@ -264,7 +288,7 @@ mod tests {
             ChatMessage::User("Hello".to_string()),
             ChatMessage::Assistant("Hi there!".to_string()),
         ];
-        let panel = ChatPanel::new(&messages, 0, false);
+        let panel = ChatPanel::new(&messages, 0, false, false);
         let lines = panel.render_messages(80);
 
         // Should have lines for both messages plus spacing

@@ -228,6 +228,8 @@ pub struct App {
     pub messages: Vec<ChatMessage>,
     /// Chat scroll offset (lines from bottom).
     pub chat_scroll: usize,
+    /// Whether there are new messages below the current scroll position.
+    pub has_new_messages: bool,
     /// Query log entries.
     pub query_log: Vec<QueryLogEntry>,
     /// Currently selected query in sidebar (index into query_log).
@@ -277,6 +279,7 @@ impl App {
             command_palette: CommandPaletteState::new(),
             messages,
             chat_scroll: 0,
+            has_new_messages: false,
             query_log: Vec::new(),
             selected_query: None,
             show_query_detail: false,
@@ -334,8 +337,13 @@ impl App {
     /// Adds a message to the chat.
     pub fn add_message(&mut self, message: ChatMessage) {
         self.messages.push(message);
-        // Auto-scroll to bottom when new message is added
-        self.chat_scroll = 0;
+        // If user has scrolled up, mark that there are new messages
+        if self.chat_scroll > 0 {
+            self.has_new_messages = true;
+        } else {
+            // Auto-scroll to bottom when at bottom
+            self.chat_scroll = 0;
+        }
     }
 
     /// Clears all chat messages.
@@ -457,18 +465,25 @@ impl App {
                     }
                     KeyCode::Down if self.focus == Focus::Chat => {
                         self.chat_scroll = self.chat_scroll.saturating_sub(1);
+                        if self.chat_scroll == 0 {
+                            self.has_new_messages = false;
+                        }
                     }
                     KeyCode::PageUp if self.focus == Focus::Chat => {
                         self.chat_scroll = self.chat_scroll.saturating_add(10);
                     }
                     KeyCode::PageDown if self.focus == Focus::Chat => {
                         self.chat_scroll = self.chat_scroll.saturating_sub(10);
+                        if self.chat_scroll == 0 {
+                            self.has_new_messages = false;
+                        }
                     }
                     KeyCode::Home if self.focus == Focus::Chat => {
                         self.chat_scroll = usize::MAX; // Will be clamped during render
                     }
                     KeyCode::End if self.focus == Focus::Chat => {
                         self.chat_scroll = 0;
+                        self.has_new_messages = false;
                     }
 
                     // Modal handling (Esc closes modal)
@@ -571,6 +586,41 @@ impl App {
             // Copy last SQL to clipboard
             KeyCode::Char('y') => {
                 self.copy_last_sql();
+            }
+            // Vim-style scrolling
+            KeyCode::Char('j') => {
+                self.chat_scroll = self.chat_scroll.saturating_sub(1);
+                if self.chat_scroll == 0 {
+                    self.has_new_messages = false;
+                }
+            }
+            KeyCode::Char('k') => {
+                self.chat_scroll = self.chat_scroll.saturating_add(1);
+            }
+            KeyCode::Char('g') => {
+                // Go to top (oldest messages)
+                self.chat_scroll = self.total_chat_lines();
+            }
+            KeyCode::Char('G') => {
+                // Go to bottom (newest messages)
+                self.chat_scroll = 0;
+                self.has_new_messages = false;
+            }
+            KeyCode::Char('d')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                // Half page down
+                self.chat_scroll = self.chat_scroll.saturating_sub(10);
+            }
+            KeyCode::Char('u')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                // Half page up
+                self.chat_scroll = self.chat_scroll.saturating_add(10);
             }
             _ => {}
         }
@@ -831,12 +881,20 @@ mod tests {
     }
 
     #[test]
-    fn test_chat_scroll_reset_on_new_message() {
+    fn test_chat_scroll_sticky_behavior() {
         let mut app = App::new(None);
-        app.chat_scroll = 5;
+
+        // When at bottom (scroll=0), adding message keeps us at bottom
+        app.chat_scroll = 0;
         app.add_message(ChatMessage::User("Hello".to_string()));
-        // Scroll should reset to 0 (bottom) when new message added
         assert_eq!(app.chat_scroll, 0);
+        assert!(!app.has_new_messages);
+
+        // When scrolled up, adding message sets has_new_messages flag
+        app.chat_scroll = 5;
+        app.add_message(ChatMessage::User("World".to_string()));
+        assert_eq!(app.chat_scroll, 5); // Scroll position preserved
+        assert!(app.has_new_messages);
     }
 
     #[test]
