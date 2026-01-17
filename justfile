@@ -25,6 +25,12 @@ check:
 fmt:
     cargo fmt
 
+# Run all CI checks locally (precommit hook)
+precommit: db
+    cargo fmt --check
+    cargo clippy -- -D warnings
+    cargo test --verbose
+
 # Run the application
 run:
     cargo run
