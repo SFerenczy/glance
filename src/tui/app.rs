@@ -275,6 +275,8 @@ pub struct App {
     pub last_esc_time: Option<Instant>,
     /// Toast notification message and expiry time.
     pub toast: Option<(String, Instant)>,
+    /// Flag indicating a re-run of the last SQL was requested.
+    pub rerun_requested: bool,
 }
 
 /// A query that is pending user confirmation.
@@ -316,6 +318,7 @@ impl App {
             last_executed_sql: None,
             last_esc_time: None,
             toast: None,
+            rerun_requested: false,
         }
     }
 
@@ -635,6 +638,14 @@ impl App {
             KeyCode::Char('y') => {
                 self.copy_last_sql();
             }
+            // Edit last SQL - load into input
+            KeyCode::Char('e') => {
+                self.edit_last_sql();
+            }
+            // Re-run last SQL
+            KeyCode::Char('r') => {
+                self.request_rerun();
+            }
             // Vim-style scrolling
             KeyCode::Char('j') => {
                 self.chat_scroll = self.chat_scroll.saturating_sub(1);
@@ -687,6 +698,46 @@ impl App {
             }
         } else {
             self.show_toast("No SQL to copy");
+        }
+    }
+
+    /// Loads the last executed SQL into the input field for editing.
+    fn edit_last_sql(&mut self) {
+        if let Some(sql) = &self.last_executed_sql.clone() {
+            self.input.text = sql.clone();
+            self.input.cursor = sql.len();
+            self.input_mode = InputMode::Insert;
+            self.show_toast("Loaded last SQL for editing");
+        } else {
+            self.show_toast("No SQL to edit");
+        }
+    }
+
+    /// Returns the last SQL for re-execution, if any.
+    /// The caller should handle actually executing the query.
+    #[allow(dead_code)] // Will be used by TUI event loop
+    pub fn get_rerun_sql(&self) -> Option<String> {
+        self.last_executed_sql.clone()
+    }
+
+    /// Requests a re-run of the last SQL query.
+    fn request_rerun(&mut self) {
+        if self.last_executed_sql.is_some() {
+            self.rerun_requested = true;
+            self.show_toast("Re-running last SQL...");
+        } else {
+            self.show_toast("No SQL to re-run");
+        }
+    }
+
+    /// Takes and clears the rerun request, returning the SQL if requested.
+    #[allow(dead_code)] // Will be used by TUI event loop
+    pub fn take_rerun_request(&mut self) -> Option<String> {
+        if self.rerun_requested {
+            self.rerun_requested = false;
+            self.last_executed_sql.clone()
+        } else {
+            None
         }
     }
 
