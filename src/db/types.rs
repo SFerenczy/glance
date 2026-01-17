@@ -238,7 +238,7 @@ mod tests {
         assert_eq!(Value::Null.to_display_string(), "NULL");
         assert_eq!(Value::Bool(true).to_display_string(), "true");
         assert_eq!(Value::Int(42).to_display_string(), "42");
-        assert_eq!(Value::Float(3.14).to_display_string(), "3.14");
+        assert_eq!(Value::Float(2.71).to_display_string(), "2.71");
         assert_eq!(
             Value::String("hello".to_string()).to_display_string(),
             "hello"
@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(Value::from(true), Value::Bool(true));
         assert_eq!(Value::from(42i32), Value::Int(42));
         assert_eq!(Value::from(42i64), Value::Int(42));
-        assert_eq!(Value::from(3.14f64), Value::Float(3.14));
+        assert_eq!(Value::from(2.71f64), Value::Float(2.71));
         assert_eq!(
             Value::from("hello".to_string()),
             Value::String("hello".to_string())
