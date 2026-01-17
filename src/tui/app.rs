@@ -2,9 +2,11 @@
 //!
 //! Contains the main App struct and related types for managing UI state.
 
+use super::history::InputHistory;
+use super::widgets::command_palette::CommandPaletteState;
 use crate::config::ConnectionConfig;
 use crate::db::QueryResult;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Status of an executed query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +78,26 @@ pub enum Focus {
     Input,
     Chat,
     Sidebar,
+}
+
+/// Input mode for vim-style editing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InputMode {
+    /// Normal mode: navigation and commands.
+    #[default]
+    Normal,
+    /// Insert mode: text input.
+    Insert,
+}
+
+impl InputMode {
+    /// Returns the display string for the mode indicator.
+    pub fn indicator(&self) -> &'static str {
+        match self {
+            Self::Normal => "-- NORMAL --",
+            Self::Insert => "-- INSERT --",
+        }
+    }
 }
 
 impl Focus {
@@ -194,8 +216,14 @@ pub struct App {
     pub running: bool,
     /// Current focus panel.
     pub focus: Focus,
+    /// Current input mode (Normal/Insert).
+    pub input_mode: InputMode,
     /// Input field state.
     pub input: InputState,
+    /// Input history for arrow key navigation.
+    pub input_history: InputHistory,
+    /// Command palette state.
+    pub command_palette: CommandPaletteState,
     /// Chat messages.
     pub messages: Vec<ChatMessage>,
     /// Chat scroll offset (lines from bottom).
@@ -212,6 +240,12 @@ pub struct App {
     pub pending_query: Option<PendingQuery>,
     /// Whether the application is currently processing (waiting for LLM/DB).
     pub is_processing: bool,
+    /// Last executed SQL query (for copy/re-run features).
+    #[allow(dead_code)] // Used in Phase 4.2 and 7.1
+    pub last_executed_sql: Option<String>,
+    /// Timestamp of last Esc press (for double-Esc detection).
+    #[allow(dead_code)] // Used in Phase 8.1
+    pub last_esc_time: Option<Instant>,
 }
 
 /// A query that is pending user confirmation.
@@ -236,7 +270,10 @@ impl App {
         Self {
             running: true,
             focus: Focus::default(),
+            input_mode: InputMode::Insert, // Start in Insert mode for immediate typing
             input: InputState::new(),
+            input_history: InputHistory::new(),
+            command_palette: CommandPaletteState::new(),
             messages,
             chat_scroll: 0,
             query_log: Vec::new(),
@@ -245,6 +282,8 @@ impl App {
             connection_info,
             pending_query: None,
             is_processing: false,
+            last_executed_sql: None,
+            last_esc_time: None,
         }
     }
 
@@ -465,11 +504,131 @@ impl App {
 
     /// Handles key events when input is focused.
     fn handle_input_key(&mut self, key: crossterm::event::KeyEvent) {
+        match self.input_mode {
+            InputMode::Normal => self.handle_normal_mode_key(key),
+            InputMode::Insert => self.handle_insert_mode_key(key),
+        }
+    }
+
+    /// Handles key events in Normal mode.
+    fn handle_normal_mode_key(&mut self, key: crossterm::event::KeyEvent) {
         use crossterm::event::KeyCode;
 
         match key.code {
+            // Enter Insert mode
+            KeyCode::Char('i') => {
+                self.input_mode = InputMode::Insert;
+            }
+            // Enter Insert mode at end of line
+            KeyCode::Char('a') => {
+                self.input_mode = InputMode::Insert;
+                self.input.move_end();
+            }
+            // Enter Insert mode at start of line
+            KeyCode::Char('I') => {
+                self.input_mode = InputMode::Insert;
+                self.input.move_home();
+            }
+            // Enter Insert mode at end of line (append)
+            KeyCode::Char('A') => {
+                self.input_mode = InputMode::Insert;
+                self.input.move_end();
+            }
+            // Navigation in Normal mode
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.input.move_left();
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                self.input.move_right();
+            }
+            KeyCode::Char('0') | KeyCode::Home => {
+                self.input.move_home();
+            }
+            KeyCode::Char('$') | KeyCode::End => {
+                self.input.move_end();
+            }
+            // Delete character under cursor
+            KeyCode::Char('x') => {
+                self.input.delete();
+            }
+            _ => {}
+        }
+    }
+
+    /// Handles key events in Insert mode.
+    fn handle_insert_mode_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::KeyCode;
+
+        // Handle command palette if visible
+        if self.command_palette.visible {
+            match key.code {
+                KeyCode::Esc => {
+                    self.command_palette.close();
+                }
+                KeyCode::Up => {
+                    self.command_palette.select_previous();
+                }
+                KeyCode::Down => {
+                    self.command_palette.select_next();
+                }
+                KeyCode::Tab | KeyCode::Enter => {
+                    // Accept selection
+                    if let Some(cmd) = self.command_palette.selected_command() {
+                        self.input.text = format!("/{} ", cmd.name);
+                        self.input.cursor = self.input.text.len();
+                    }
+                    self.command_palette.close();
+                }
+                KeyCode::Backspace => {
+                    // Update filter or close if empty
+                    if self.input.text.len() > 1 {
+                        self.input.backspace();
+                        // Update filter (text after '/')
+                        let filter = self.input.text.strip_prefix('/').unwrap_or("");
+                        self.command_palette.set_filter(filter);
+                    } else {
+                        self.input.backspace();
+                        self.command_palette.close();
+                    }
+                }
+                KeyCode::Char(c) => {
+                    self.input.insert(c);
+                    // Update filter (text after '/')
+                    let filter = self.input.text.strip_prefix('/').unwrap_or("");
+                    self.command_palette.set_filter(filter);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        match key.code {
+            // Exit to Normal mode
+            KeyCode::Esc => {
+                self.input_mode = InputMode::Normal;
+            }
+            // History navigation
+            KeyCode::Up => {
+                if let Some(entry) = self.input_history.previous(&self.input.text) {
+                    self.input.text = entry.to_string();
+                    self.input.cursor = self.input.text.len();
+                }
+            }
+            KeyCode::Down => {
+                if let Some(entry) = self.input_history.next() {
+                    self.input.text = entry.to_string();
+                    self.input.cursor = self.input.text.len();
+                }
+            }
+            // Text input
             KeyCode::Char(c) => {
-                self.input.insert(c);
+                // Check if this triggers command palette
+                if c == '/' && self.input.is_empty() {
+                    self.input.insert(c);
+                    self.command_palette.open();
+                } else {
+                    self.input.insert(c);
+                }
             }
             KeyCode::Backspace => {
                 self.input.backspace();
@@ -490,12 +649,7 @@ impl App {
                 self.input.move_end();
             }
             KeyCode::Enter => {
-                let text = self.input.take();
-                if !text.is_empty() {
-                    // TODO: Process the input (send to orchestrator)
-                    // For now, just clear it
-                    let _ = text;
-                }
+                // Enter is handled by the main event loop for submission
             }
             _ => {}
         }
@@ -506,7 +660,11 @@ impl App {
         if self.input.is_empty() {
             None
         } else {
-            Some(self.input.take())
+            let text = self.input.take();
+            // Add to history and reset position
+            self.input_history.push(text.clone());
+            self.input_history.reset_position();
+            Some(text)
         }
     }
 }

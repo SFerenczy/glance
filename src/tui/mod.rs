@@ -4,6 +4,8 @@
 
 pub mod app;
 mod events;
+mod history;
+mod sql_autocomplete;
 mod ui;
 pub mod widgets;
 

@@ -3,7 +3,7 @@
 //! Defines the layout and renders all UI components.
 
 use super::app::{App, Focus};
-use super::widgets::{chat, confirm, header, input, query_detail, sidebar};
+use super::widgets::{chat, command_palette, confirm, header, input, query_detail, sidebar};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     Frame,
@@ -57,6 +57,13 @@ pub fn render(frame: &mut Frame, app: &App) {
     if let Some(pending) = &app.pending_query {
         confirm::render_confirmation_dialog(frame, &pending.sql, &pending.classification);
     }
+
+    // Render command palette if visible
+    if app.command_palette.visible {
+        let palette_area = command_palette::CommandPalette::popup_area(input_area);
+        let palette = command_palette::CommandPalette::new(&app.command_palette);
+        frame.render_widget(palette, palette_area);
+    }
 }
 
 /// Renders the header bar.
@@ -82,7 +89,7 @@ fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
 /// Renders the input bar.
 fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.focus == Focus::Input;
-    let widget = input::InputBar::new(&app.input.text, app.input.cursor, focused);
+    let widget = input::InputBar::new(&app.input.text, app.input.cursor, focused, app.input_mode);
     frame.render_widget(widget, area);
 
     // Position cursor in input field when focused
