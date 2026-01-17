@@ -23,6 +23,7 @@ pub use types::{Conversation, Message, Role};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use std::str::FromStr;
 
 use crate::error::Result;
 
@@ -60,17 +61,6 @@ pub enum LlmProvider {
 }
 
 impl LlmProvider {
-    /// Parses a provider from a string.
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "openai" => Some(Self::OpenAi),
-            "anthropic" => Some(Self::Anthropic),
-            "ollama" => Some(Self::Ollama),
-            "mock" => Some(Self::Mock),
-            _ => None,
-        }
-    }
-
     /// Returns the provider as a string.
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -78,6 +68,20 @@ impl LlmProvider {
             Self::Anthropic => "anthropic",
             Self::Ollama => "ollama",
             Self::Mock => "mock",
+        }
+    }
+}
+
+impl FromStr for LlmProvider {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "openai" => Ok(Self::OpenAi),
+            "anthropic" => Ok(Self::Anthropic),
+            "ollama" => Ok(Self::Ollama),
+            "mock" => Ok(Self::Mock),
+            _ => Err(format!("Unknown LLM provider: {}", s)),
         }
     }
 }
@@ -94,14 +98,14 @@ mod tests {
 
     #[test]
     fn test_provider_from_str() {
-        assert_eq!(LlmProvider::from_str("openai"), Some(LlmProvider::OpenAi));
-        assert_eq!(LlmProvider::from_str("OpenAI"), Some(LlmProvider::OpenAi));
+        assert_eq!("openai".parse::<LlmProvider>().unwrap(), LlmProvider::OpenAi);
+        assert_eq!("OpenAI".parse::<LlmProvider>().unwrap(), LlmProvider::OpenAi);
         assert_eq!(
-            LlmProvider::from_str("anthropic"),
-            Some(LlmProvider::Anthropic)
+            "anthropic".parse::<LlmProvider>().unwrap(),
+            LlmProvider::Anthropic
         );
-        assert_eq!(LlmProvider::from_str("ollama"), Some(LlmProvider::Ollama));
-        assert_eq!(LlmProvider::from_str("unknown"), None);
+        assert_eq!("ollama".parse::<LlmProvider>().unwrap(), LlmProvider::Ollama);
+        assert!("unknown".parse::<LlmProvider>().is_err());
     }
 
     #[test]

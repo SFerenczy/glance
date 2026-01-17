@@ -52,8 +52,11 @@ async fn run() -> Result<()> {
             info!("Connection: {}", conn.display_string());
 
             // Determine LLM provider from config
-            let llm_provider =
-                LlmProvider::from_str(&config.llm.provider).unwrap_or(LlmProvider::OpenAi);
+            let llm_provider = config
+                .llm
+                .provider
+                .parse::<LlmProvider>()
+                .unwrap_or(LlmProvider::OpenAi);
 
             // Run with full orchestrator integration
             tui::run_async(conn, llm_provider).await?;
