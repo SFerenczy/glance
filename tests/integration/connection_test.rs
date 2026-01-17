@@ -28,7 +28,7 @@ async fn test_connect_with_valid_credentials() {
     client.close().await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_connect_with_invalid_host() {
     let config = ConnectionConfig {
         host: Some("invalid.host.that.does.not.exist.local".to_string()),
@@ -54,7 +54,7 @@ async fn test_connect_with_invalid_host() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn test_connect_with_invalid_port() {
     let config = ConnectionConfig {
         host: Some("localhost".to_string()),
