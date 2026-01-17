@@ -31,6 +31,8 @@ pub struct QueryLogEntry {
     pub row_count: Option<usize>,
     /// Error message (for failed queries).
     pub error: Option<String>,
+    /// When the query was executed.
+    pub timestamp: Instant,
 }
 
 impl QueryLogEntry {
@@ -42,6 +44,7 @@ impl QueryLogEntry {
             execution_time,
             row_count: Some(row_count),
             error: None,
+            timestamp: Instant::now(),
         }
     }
 
@@ -53,6 +56,26 @@ impl QueryLogEntry {
             execution_time,
             row_count: None,
             error: Some(error),
+            timestamp: Instant::now(),
+        }
+    }
+
+    /// Returns a human-readable relative timestamp.
+    pub fn relative_time(&self) -> String {
+        let elapsed = self.timestamp.elapsed();
+        let secs = elapsed.as_secs();
+
+        if secs < 60 {
+            "just now".to_string()
+        } else if secs < 3600 {
+            let mins = secs / 60;
+            format!("{}m ago", mins)
+        } else if secs < 86400 {
+            let hours = secs / 3600;
+            format!("{}h ago", hours)
+        } else {
+            let days = secs / 86400;
+            format!("{}d ago", days)
         }
     }
 

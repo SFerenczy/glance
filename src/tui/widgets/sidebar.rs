@@ -56,15 +56,17 @@ impl<'a> Sidebar<'a> {
         );
 
         let time_str = Self::format_time(entry);
+        let relative = entry.relative_time();
         let info_text = match (entry.status, entry.row_count) {
             (QueryStatus::Success, Some(rows)) => format!(
-                "{}, {} row{}",
+                "{}, {} row{} · {}",
                 time_str,
                 rows,
-                if rows == 1 { "" } else { "s" }
+                if rows == 1 { "" } else { "s" },
+                relative
             ),
-            (QueryStatus::Error, _) => format!("{}, error", time_str),
-            _ => time_str,
+            (QueryStatus::Error, _) => format!("{}, error · {}", time_str, relative),
+            _ => format!("{} · {}", time_str, relative),
         };
         let info_span = Span::styled(info_text, Style::default().fg(Color::DarkGray));
 
