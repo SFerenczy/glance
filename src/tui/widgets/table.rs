@@ -102,9 +102,9 @@ impl<'a> ResultTable<'a> {
         // Header separator
         lines.push(self.render_border(&adjusted_widths, '├', '┼', '┤'));
 
-        // Data rows
-        for row in &self.result.rows {
-            lines.push(self.render_data_row(row, &adjusted_widths));
+        // Data rows with row numbers
+        for (row_num, row) in self.result.rows.iter().enumerate() {
+            lines.push(self.render_data_row(row_num + 1, row, &adjusted_widths));
         }
 
         // Bottom border
@@ -164,9 +164,17 @@ impl<'a> ResultTable<'a> {
         Line::from(spans)
     }
 
-    /// Renders a data row.
-    fn render_data_row(&self, row: &[Value], widths: &[usize]) -> Line<'a> {
+    /// Renders a data row with row number.
+    fn render_data_row(&self, row_num: usize, row: &[Value], widths: &[usize]) -> Line<'a> {
         let mut spans = Vec::new();
+
+        // Row number prefix (dimmed)
+        let row_num_str = format!("{:>3} ", row_num);
+        spans.push(Span::styled(
+            row_num_str,
+            Style::default().fg(Color::DarkGray),
+        ));
+
         spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
 
         for (i, value) in row.iter().enumerate() {
