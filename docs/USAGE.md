@@ -174,8 +174,8 @@ These show a strong warning:
 
 ### Config File Location
 
-- **Linux/macOS**: `~/.config/glance/config.toml`
-- **Windows**: `%APPDATA%\glance\config.toml`
+- **Linux/macOS**: `~/.config/db-glance/config.toml`
+- **Windows**: `%APPDATA%\db-glance\config.toml`
 
 ### Example Configuration
 

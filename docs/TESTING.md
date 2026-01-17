@@ -80,7 +80,7 @@ just test-integration
 
 **Steps:**
 
-1. Create `~/.config/glance/config.toml`:
+1. Create `~/.config/db-glance/config.toml`:
    ```toml
    [connections.default]
    host = "localhost"

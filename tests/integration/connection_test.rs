@@ -2,8 +2,8 @@
 //!
 //! Tests database connectivity and error handling.
 
-use glance::config::ConnectionConfig;
-use glance::db::{DatabaseClient, PostgresClient};
+use db_glance::config::ConnectionConfig;
+use db_glance::db::{DatabaseClient, PostgresClient};
 
 /// Helper to get test database URL from environment.
 fn get_test_database_url() -> Option<String> {

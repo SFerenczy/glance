@@ -191,7 +191,7 @@ Implementation approach:
 
 ## Configuration
 
-Configuration file: `~/.config/glance/config.toml`
+Configuration file: `~/.config/db-glance/config.toml`
 
 ```toml
 [llm]

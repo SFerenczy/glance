@@ -1,14 +1,19 @@
 [package]
-name = "glance"
+name = "db-glance"
 version = "0.1.0"
 edition = "2021"
 authors = ["Sophie Ferenczy"]
 description = "A lightweight, AI-first database viewer"
 license = "MIT"
 repository = "https://github.com/SFerenczy/glance"
+
 readme = "README.md"
 keywords = ["database", "postgres", "tui", "llm", "sql"]
 categories = ["command-line-utilities", "database"]
+
+[[bin]]
+name = "glance"
+path = "src/main.rs"
 
 [dependencies]
 # Async runtime

@@ -74,7 +74,7 @@ Glance generates SQL, executes it safely, and displays results.
 
 ## Configuration
 
-Create `~/.config/glance/config.toml`:
+Create `~/.config/db-glance/config.toml`:
 
 ```toml
 [llm]
