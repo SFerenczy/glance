@@ -48,6 +48,8 @@ pub struct CommandPaletteState {
     pub selected: usize,
     /// Cached filtered results.
     filtered_commands: Vec<usize>,
+    /// Flag indicating the input should be submitted after palette closes.
+    pub submit_on_close: bool,
 }
 
 impl CommandPaletteState {
@@ -70,6 +72,18 @@ impl CommandPaletteState {
         self.filter.clear();
         self.selected = 0;
         self.filtered_commands.clear();
+        // Note: submit_on_close is NOT cleared here - it's consumed by the event loop
+    }
+
+    /// Closes the palette and signals that input should be submitted.
+    pub fn close_and_submit(&mut self) {
+        self.submit_on_close = true;
+        self.close();
+    }
+
+    /// Takes and clears the submit_on_close flag.
+    pub fn take_submit_request(&mut self) -> bool {
+        std::mem::take(&mut self.submit_on_close)
     }
 
     /// Updates the filter and refreshes results.

@@ -659,12 +659,19 @@ impl App {
                 KeyCode::Down => {
                     self.command_palette.select_next();
                 }
-                KeyCode::Tab | KeyCode::Enter => {
+                KeyCode::Tab => {
                     if let Some(cmd) = self.command_palette.selected_command() {
                         self.input.text = format!("/{} ", cmd.name);
                         self.input.cursor = self.input.text.len();
                     }
                     self.command_palette.close();
+                }
+                KeyCode::Enter => {
+                    if let Some(cmd) = self.command_palette.selected_command() {
+                        self.input.text = format!("/{} ", cmd.name);
+                        self.input.cursor = self.input.text.len();
+                    }
+                    self.command_palette.close_and_submit();
                 }
                 KeyCode::Backspace => {
                     if self.input.text.len() > 1 {
@@ -914,13 +921,19 @@ impl App {
                 KeyCode::Down => {
                     self.command_palette.select_next();
                 }
-                KeyCode::Tab | KeyCode::Enter => {
-                    // Accept selection
+                KeyCode::Tab => {
                     if let Some(cmd) = self.command_palette.selected_command() {
                         self.input.text = format!("/{} ", cmd.name);
                         self.input.cursor = self.input.text.len();
                     }
                     self.command_palette.close();
+                }
+                KeyCode::Enter => {
+                    if let Some(cmd) = self.command_palette.selected_command() {
+                        self.input.text = format!("/{} ", cmd.name);
+                        self.input.cursor = self.input.text.len();
+                    }
+                    self.command_palette.close_and_submit();
                 }
                 KeyCode::Backspace => {
                     // Update filter or close if empty

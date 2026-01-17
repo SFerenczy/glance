@@ -20,7 +20,7 @@ use crate::config::ConnectionConfig;
 use crate::error::{GlanceError, Result};
 use crate::llm::LlmProvider;
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers},
+    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -139,7 +139,39 @@ impl Tui {
 
             // Handle events
             if let Some(event) = self.event_handler.next()? {
+                // Filter for Press events only (same as async version)
+                if let Event::Key(ref key) = event {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+
+                    // Handle input submission (when palette is not open)
+                    if key.code == KeyCode::Enter
+                        && app_state.focus == app::Focus::Input
+                        && !app_state.command_palette.visible
+                    {
+                        if let Some(input) = app_state.submit_input() {
+                            // In limited mode, just show the input as a user message
+                            app_state.add_message(app::ChatMessage::User(input.clone()));
+                            app_state.add_message(app::ChatMessage::System(
+                                "No database connection. Running in limited mode.".to_string(),
+                            ));
+                        }
+                        continue;
+                    }
+                }
+
                 app_state.handle_event(event);
+
+                // Check if command palette requested immediate submission
+                if app_state.command_palette.take_submit_request() {
+                    if let Some(input) = app_state.submit_input() {
+                        app_state.add_message(app::ChatMessage::User(input.clone()));
+                        app_state.add_message(app::ChatMessage::System(
+                            "No database connection. Running in limited mode.".to_string(),
+                        ));
+                    }
+                }
             }
         }
 
@@ -260,7 +292,7 @@ impl Tui {
         use crossterm::event::Event as CEvent;
 
         match event {
-            CEvent::Key(key) => {
+            CEvent::Key(key) if key.kind == KeyEventKind::Press => {
                 // Handle confirmation dialog first
                 if app_state.has_pending_query() {
                     match key.code {
@@ -311,8 +343,11 @@ impl Tui {
                     _ => {}
                 }
 
-                // Handle input submission
-                if key.code == KeyCode::Enter && app_state.focus == app::Focus::Input {
+                // Handle input submission (but not when command palette is open)
+                if key.code == KeyCode::Enter
+                    && app_state.focus == app::Focus::Input
+                    && !app_state.command_palette.visible
+                {
                     if let Some(input) = app_state.submit_input() {
                         // Add user message to chat
                         app_state.add_message(app::ChatMessage::User(input.clone()));
@@ -337,6 +372,26 @@ impl Tui {
                 // Convert to our Event type and handle normally
                 let our_event = Event::Key(key);
                 app_state.handle_event(our_event);
+
+                // Check if command palette requested immediate submission
+                if app_state.command_palette.take_submit_request() {
+                    if let Some(input) = app_state.submit_input() {
+                        app_state.add_message(app::ChatMessage::User(input.clone()));
+                        app_state.is_processing = true;
+
+                        match orchestrator.handle_input(&input).await {
+                            Ok(result) => {
+                                self.handle_input_result(result, app_state, orchestrator)
+                                    .await;
+                            }
+                            Err(e) => {
+                                error!("Error processing input: {}", e);
+                                app_state.add_message(app::ChatMessage::Error(e.to_string()));
+                            }
+                        }
+                        app_state.is_processing = false;
+                    }
+                }
             }
             CEvent::Resize(w, h) => {
                 app_state.handle_event(Event::Resize(w, h));
