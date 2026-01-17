@@ -3,7 +3,7 @@
 //! Defines the layout and renders all UI components.
 
 use super::app::{App, Focus};
-use super::widgets::{chat, command_palette, confirm, header, input, query_detail, sidebar};
+use super::widgets::{chat, command_palette, confirm, header, input, query_detail, sidebar, toast};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     Frame,
@@ -63,6 +63,13 @@ pub fn render(frame: &mut Frame, app: &App) {
         let palette_area = command_palette::CommandPalette::popup_area(input_area);
         let palette = command_palette::CommandPalette::new(&app.command_palette);
         frame.render_widget(palette, palette_area);
+    }
+
+    // Render toast notification if present
+    if let Some((message, _)) = &app.toast {
+        let toast_area = toast::Toast::area(area);
+        let toast_widget = toast::Toast::new(message);
+        frame.render_widget(toast_widget, toast_area);
     }
 }
 

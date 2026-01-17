@@ -3,6 +3,7 @@
 //! Provides the main TUI application loop using ratatui and crossterm.
 
 pub mod app;
+mod clipboard;
 mod events;
 mod history;
 mod sql_autocomplete;
@@ -54,6 +55,11 @@ impl Tui {
     pub fn new() -> Result<Self> {
         let terminal = Self::setup_terminal()?;
         let event_handler = EventHandler::new();
+
+        // Initialize clipboard (non-fatal if it fails)
+        if let Err(e) = clipboard::init() {
+            tracing::warn!("Failed to initialize clipboard: {}", e);
+        }
 
         Ok(Self {
             terminal,
@@ -193,6 +199,9 @@ impl Tui {
         rx: &mut mpsc::Receiver<AsyncMessage>,
     ) -> Result<()> {
         loop {
+            // Clear expired toast notifications
+            app_state.clear_expired_toast();
+
             // Draw the UI
             self.terminal
                 .draw(|frame| ui::render(frame, app_state))

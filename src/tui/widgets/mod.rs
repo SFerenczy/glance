@@ -11,3 +11,4 @@ pub mod query_detail;
 pub mod sidebar;
 pub mod sql_completion;
 pub mod table;
+pub mod toast;

@@ -241,11 +241,12 @@ pub struct App {
     /// Whether the application is currently processing (waiting for LLM/DB).
     pub is_processing: bool,
     /// Last executed SQL query (for copy/re-run features).
-    #[allow(dead_code)] // Used in Phase 4.2 and 7.1
     pub last_executed_sql: Option<String>,
     /// Timestamp of last Esc press (for double-Esc detection).
     #[allow(dead_code)] // Used in Phase 8.1
     pub last_esc_time: Option<Instant>,
+    /// Toast notification message and expiry time.
+    pub toast: Option<(String, Instant)>,
 }
 
 /// A query that is pending user confirmation.
@@ -284,6 +285,22 @@ impl App {
             is_processing: false,
             last_executed_sql: None,
             last_esc_time: None,
+            toast: None,
+        }
+    }
+
+    /// Shows a toast notification that expires after a duration.
+    pub fn show_toast(&mut self, message: impl Into<String>) {
+        let expiry = Instant::now() + Duration::from_secs(3);
+        self.toast = Some((message.into(), expiry));
+    }
+
+    /// Clears expired toast notifications.
+    pub fn clear_expired_toast(&mut self) {
+        if let Some((_, expiry)) = &self.toast {
+            if Instant::now() > *expiry {
+                self.toast = None;
+            }
         }
     }
 
@@ -551,7 +568,27 @@ impl App {
             KeyCode::Char('x') => {
                 self.input.delete();
             }
+            // Copy last SQL to clipboard
+            KeyCode::Char('y') => {
+                self.copy_last_sql();
+            }
             _ => {}
+        }
+    }
+
+    /// Copies the last executed SQL to the clipboard.
+    fn copy_last_sql(&mut self) {
+        if let Some(sql) = &self.last_executed_sql {
+            match super::clipboard::copy(sql) {
+                Ok(()) => {
+                    self.show_toast("Copied SQL to clipboard");
+                }
+                Err(e) => {
+                    self.show_toast(format!("Failed to copy: {}", e));
+                }
+            }
+        } else {
+            self.show_toast("No SQL to copy");
         }
     }
 
