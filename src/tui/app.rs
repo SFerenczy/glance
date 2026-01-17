@@ -289,6 +289,8 @@ pub struct App {
     pub ring_bell: bool,
     /// Whether the database connection is active/healthy.
     pub is_connected: bool,
+    /// Whether vim-style navigation is enabled (toggled via /vim command).
+    pub vim_mode_enabled: bool,
 }
 
 /// A query that is pending user confirmation.
@@ -333,7 +335,8 @@ impl App {
             rerun_requested: false,
             show_help: false,
             ring_bell: false,
-            is_connected: true, // Assume connected initially
+            is_connected: true,      // Assume connected initially
+            vim_mode_enabled: false, // Vim mode disabled by default
         }
     }
 
@@ -381,6 +384,20 @@ impl App {
             if Instant::now() > *expiry {
                 self.toast = None;
             }
+        }
+    }
+
+    /// Toggles vim mode on/off.
+    pub fn toggle_vim_mode(&mut self) {
+        self.vim_mode_enabled = !self.vim_mode_enabled;
+        if self.vim_mode_enabled {
+            self.show_toast("Vim mode enabled");
+            // Start in Insert mode when enabling vim mode
+            self.input_mode = InputMode::Insert;
+        } else {
+            self.show_toast("Vim mode disabled");
+            // Reset to Insert mode when disabling
+            self.input_mode = InputMode::Insert;
         }
     }
 
@@ -613,9 +630,119 @@ impl App {
 
     /// Handles key events when input is focused.
     fn handle_input_key(&mut self, key: crossterm::event::KeyEvent) {
+        // When vim mode is disabled, always use standard input handling
+        if !self.vim_mode_enabled {
+            self.handle_standard_input_key(key);
+            return;
+        }
+
+        // Vim mode enabled: use Normal/Insert mode switching
         match self.input_mode {
             InputMode::Normal => self.handle_normal_mode_key(key),
             InputMode::Insert => self.handle_insert_mode_key(key),
+        }
+    }
+
+    /// Handles key events in standard mode (vim mode disabled).
+    fn handle_standard_input_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::KeyCode;
+
+        // Handle command palette if visible
+        if self.command_palette.visible {
+            match key.code {
+                KeyCode::Esc => {
+                    self.command_palette.close();
+                }
+                KeyCode::Up => {
+                    self.command_palette.select_previous();
+                }
+                KeyCode::Down => {
+                    self.command_palette.select_next();
+                }
+                KeyCode::Tab | KeyCode::Enter => {
+                    if let Some(cmd) = self.command_palette.selected_command() {
+                        self.input.text = format!("/{} ", cmd.name);
+                        self.input.cursor = self.input.text.len();
+                    }
+                    self.command_palette.close();
+                }
+                KeyCode::Backspace => {
+                    if self.input.text.len() > 1 {
+                        self.input.backspace();
+                        let filter = self.input.text.strip_prefix('/').unwrap_or("");
+                        self.command_palette.set_filter(filter);
+                    } else {
+                        self.input.backspace();
+                        self.command_palette.close();
+                    }
+                }
+                KeyCode::Char(c) => {
+                    self.input.insert(c);
+                    let filter = self.input.text.strip_prefix('/').unwrap_or("");
+                    self.command_palette.set_filter(filter);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        match key.code {
+            // Esc clears input in standard mode
+            KeyCode::Esc => {
+                self.input.clear();
+            }
+            // Clear input with Ctrl+U
+            KeyCode::Char('u')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.input.clear();
+            }
+            // History navigation
+            KeyCode::Up => {
+                if let Some(entry) = self.input_history.previous(&self.input.text) {
+                    self.input.text = entry.to_string();
+                    self.input.cursor = self.input.text.len();
+                }
+            }
+            KeyCode::Down => {
+                if let Some(entry) = self.input_history.next() {
+                    self.input.text = entry.to_string();
+                    self.input.cursor = self.input.text.len();
+                }
+            }
+            // Text input
+            KeyCode::Char(c) => {
+                if c == '/' && self.input.is_empty() {
+                    self.input.insert(c);
+                    self.command_palette.open();
+                } else {
+                    self.input.insert(c);
+                }
+            }
+            KeyCode::Backspace => {
+                self.input.backspace();
+            }
+            KeyCode::Delete => {
+                self.input.delete();
+            }
+            KeyCode::Left => {
+                self.input.move_left();
+            }
+            KeyCode::Right => {
+                self.input.move_right();
+            }
+            KeyCode::Home => {
+                self.input.move_home();
+            }
+            KeyCode::End => {
+                self.input.move_end();
+            }
+            KeyCode::Enter => {
+                // Enter is handled by the main event loop for submission
+            }
+            _ => {}
         }
     }
 

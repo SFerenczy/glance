@@ -373,6 +373,9 @@ impl Tui {
             InputResult::Exit => {
                 app_state.running = false;
             }
+            InputResult::ToggleVimMode => {
+                app_state.toggle_vim_mode();
+            }
         }
     }
 
@@ -395,6 +398,9 @@ impl Tui {
                     }
                     Ok(InputResult::Exit) => {
                         app_state.running = false;
+                    }
+                    Ok(InputResult::ToggleVimMode) => {
+                        app_state.toggle_vim_mode();
                     }
                     Ok(InputResult::None) => {}
                     Err(e) => {

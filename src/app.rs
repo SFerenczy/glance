@@ -19,6 +19,7 @@ const HELP_TEXT: &str = r#"Available commands:
   /sql <query>  - Execute raw SQL directly
   /clear        - Clear chat history and LLM context
   /schema       - Display database schema
+  /vim          - Toggle vim-style navigation mode
   /help         - Show this help message
   /quit, /exit  - Exit the application
 
@@ -26,8 +27,8 @@ Keyboard shortcuts:
   Ctrl+C, Ctrl+Q  - Exit application
   Tab             - Switch focus between panels
   Enter           - Submit input
-  Esc             - Cancel/close modal
-  ↑/↓             - Scroll or navigate
+  Esc             - Clear input (or exit to Normal mode in vim mode)
+  ↑/↓             - History navigation or scroll
   Page Up/Down    - Scroll by page"#;
 
 /// Result of processing user input.
@@ -44,6 +45,8 @@ pub enum InputResult {
     },
     /// Application should exit.
     Exit,
+    /// Toggle vim mode.
+    ToggleVimMode,
 }
 
 /// The main orchestrator that coordinates all components.
@@ -169,6 +172,7 @@ impl Orchestrator {
                 )]))
             }
             "/quit" | "/exit" => Ok(InputResult::Exit),
+            "/vim" => Ok(InputResult::ToggleVimMode),
             "/help" => Ok(InputResult::Messages(vec![ChatMessage::System(
                 HELP_TEXT.to_string(),
             )])),

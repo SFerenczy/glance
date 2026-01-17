@@ -120,7 +120,13 @@ fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
 /// Renders the input bar.
 fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     let focused = app.focus == Focus::Input;
-    let widget = input::InputBar::new(&app.input.text, app.input.cursor, focused, app.input_mode);
+    let widget = input::InputBar::new(
+        &app.input.text,
+        app.input.cursor,
+        focused,
+        app.input_mode,
+        app.vim_mode_enabled,
+    );
     frame.render_widget(widget, area);
 
     // Position cursor in input field when focused

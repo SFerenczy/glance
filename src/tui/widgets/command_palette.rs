@@ -31,6 +31,7 @@ pub const COMMANDS: &[Command] = &[
     Command::new("sql", "Execute raw SQL directly"),
     Command::new("schema", "Display database schema"),
     Command::new("clear", "Clear chat history and LLM context"),
+    Command::new("vim", "Toggle vim-style navigation mode"),
     Command::new("help", "Show help message"),
     Command::new("quit", "Exit the application"),
     Command::new("exit", "Exit the application"),
