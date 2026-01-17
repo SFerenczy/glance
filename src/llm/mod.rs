@@ -98,13 +98,22 @@ mod tests {
 
     #[test]
     fn test_provider_from_str() {
-        assert_eq!("openai".parse::<LlmProvider>().unwrap(), LlmProvider::OpenAi);
-        assert_eq!("OpenAI".parse::<LlmProvider>().unwrap(), LlmProvider::OpenAi);
+        assert_eq!(
+            "openai".parse::<LlmProvider>().unwrap(),
+            LlmProvider::OpenAi
+        );
+        assert_eq!(
+            "OpenAI".parse::<LlmProvider>().unwrap(),
+            LlmProvider::OpenAi
+        );
         assert_eq!(
             "anthropic".parse::<LlmProvider>().unwrap(),
             LlmProvider::Anthropic
         );
-        assert_eq!("ollama".parse::<LlmProvider>().unwrap(), LlmProvider::Ollama);
+        assert_eq!(
+            "ollama".parse::<LlmProvider>().unwrap(),
+            LlmProvider::Ollama
+        );
         assert!("unknown".parse::<LlmProvider>().is_err());
     }
 
