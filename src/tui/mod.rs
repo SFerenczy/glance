@@ -202,6 +202,11 @@ impl Tui {
             // Clear expired toast notifications
             app_state.clear_expired_toast();
 
+            // Ring terminal bell if requested (for long query notification)
+            if app_state.take_bell_request() {
+                print!("\x07"); // ASCII BEL character
+            }
+
             // Draw the UI
             self.terminal
                 .draw(|frame| ui::render(frame, app_state))

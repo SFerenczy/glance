@@ -285,6 +285,8 @@ pub struct App {
     pub rerun_requested: bool,
     /// Whether the help overlay is visible.
     pub show_help: bool,
+    /// Whether to ring the terminal bell on next render (for long query notification).
+    pub ring_bell: bool,
 }
 
 /// A query that is pending user confirmation.
@@ -328,6 +330,7 @@ impl App {
             toast: None,
             rerun_requested: false,
             show_help: false,
+            ring_bell: false,
         }
     }
 
@@ -356,6 +359,17 @@ impl App {
     pub fn stop_spinner(&mut self) {
         self.is_processing = false;
         self.spinner = None;
+    }
+
+    /// Requests a terminal bell (for long query notification).
+    #[allow(dead_code)] // Called from TUI event loop
+    pub fn request_bell(&mut self) {
+        self.ring_bell = true;
+    }
+
+    /// Takes and clears the bell request.
+    pub fn take_bell_request(&mut self) -> bool {
+        std::mem::take(&mut self.ring_bell)
     }
 
     /// Clears expired toast notifications.
