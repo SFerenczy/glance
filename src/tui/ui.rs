@@ -3,7 +3,9 @@
 //! Defines the layout and renders all UI components.
 
 use super::app::{App, Focus};
-use super::widgets::{chat, command_palette, confirm, header, input, query_detail, sidebar, toast};
+use super::widgets::{
+    chat, command_palette, confirm, header, help, input, query_detail, sidebar, toast,
+};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     Frame,
@@ -70,6 +72,13 @@ pub fn render(frame: &mut Frame, app: &App) {
         let toast_area = toast::Toast::area(area);
         let toast_widget = toast::Toast::new(message);
         frame.render_widget(toast_widget, toast_area);
+    }
+
+    // Render help overlay if visible
+    if app.show_help {
+        let help_area = help::HelpOverlay::area(area);
+        let help_widget = help::HelpOverlay::new();
+        frame.render_widget(help_widget, help_area);
     }
 }
 

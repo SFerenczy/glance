@@ -277,6 +277,8 @@ pub struct App {
     pub toast: Option<(String, Instant)>,
     /// Flag indicating a re-run of the last SQL was requested.
     pub rerun_requested: bool,
+    /// Whether the help overlay is visible.
+    pub show_help: bool,
 }
 
 /// A query that is pending user confirmation.
@@ -319,6 +321,7 @@ impl App {
             last_esc_time: None,
             toast: None,
             rerun_requested: false,
+            show_help: false,
         }
     }
 
@@ -645,6 +648,10 @@ impl App {
             // Re-run last SQL
             KeyCode::Char('r') => {
                 self.request_rerun();
+            }
+            // Toggle help overlay
+            KeyCode::Char('?') => {
+                self.show_help = !self.show_help;
             }
             // Vim-style scrolling
             KeyCode::Char('j') => {
