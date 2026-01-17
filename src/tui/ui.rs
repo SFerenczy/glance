@@ -29,12 +29,18 @@ pub fn render(frame: &mut Frame, app: &App) {
     let content_area = main_layout[1];
     let input_area = main_layout[2];
 
-    // Content layout: chat (70%) and sidebar (30%)
+    // Content layout: dynamic sizing based on focus
+    // When sidebar is focused, give it more space (40%), otherwise 30%
+    let (chat_pct, sidebar_pct) = if app.focus == Focus::Sidebar {
+        (60, 40)
+    } else {
+        (70, 30)
+    };
     let content_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(70), // Chat panel
-            Constraint::Percentage(30), // Sidebar
+            Constraint::Percentage(chat_pct),
+            Constraint::Percentage(sidebar_pct),
         ])
         .split(content_area);
 
