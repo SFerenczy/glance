@@ -189,7 +189,10 @@ impl LlmClient for AnthropicClient {
         let mut delay = Duration::from_millis(RETRY_BASE_DELAY_MS);
 
         for attempt in 1..=MAX_RETRY_ATTEMPTS {
-            debug!("Anthropic API request attempt {} of {}", attempt, MAX_RETRY_ATTEMPTS);
+            debug!(
+                "Anthropic API request attempt {} of {}",
+                attempt, MAX_RETRY_ATTEMPTS
+            );
 
             let result = self
                 .client
@@ -210,8 +213,10 @@ impl LlmClient for AnthropicClient {
                         .map_err(|e| GlanceError::llm(format!("Failed to read response: {}", e)))?;
 
                     if status.is_success() {
-                        let response: AnthropicResponse = serde_json::from_str(&body)
-                            .map_err(|e| GlanceError::llm(format!("Failed to parse response: {}", e)))?;
+                        let response: AnthropicResponse =
+                            serde_json::from_str(&body).map_err(|e| {
+                                GlanceError::llm(format!("Failed to parse response: {}", e))
+                            })?;
 
                         // Extract text from content blocks
                         let text = response
@@ -492,14 +497,16 @@ mod tests {
 
     #[test]
     fn test_parse_error_unauthorized() {
-        let (error, is_retryable) = AnthropicClient::parse_error(reqwest::StatusCode::UNAUTHORIZED, "");
+        let (error, is_retryable) =
+            AnthropicClient::parse_error(reqwest::StatusCode::UNAUTHORIZED, "");
         assert!(error.to_string().contains("Authentication failed"));
         assert!(!is_retryable);
     }
 
     #[test]
     fn test_parse_error_rate_limited() {
-        let (error, is_retryable) = AnthropicClient::parse_error(reqwest::StatusCode::TOO_MANY_REQUESTS, "");
+        let (error, is_retryable) =
+            AnthropicClient::parse_error(reqwest::StatusCode::TOO_MANY_REQUESTS, "");
         assert!(error.to_string().contains("Rate limited"));
         assert!(is_retryable);
     }
@@ -513,7 +520,8 @@ mod tests {
 
     #[test]
     fn test_parse_error_server_error_is_retryable() {
-        let (_, is_retryable) = AnthropicClient::parse_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "");
+        let (_, is_retryable) =
+            AnthropicClient::parse_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "");
         assert!(is_retryable);
     }
 
