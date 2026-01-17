@@ -15,14 +15,20 @@ use ratatui::{
 pub struct Header<'a> {
     connection_info: Option<&'a str>,
     spinner: Option<&'a Spinner>,
+    is_connected: bool,
 }
 
 impl<'a> Header<'a> {
     /// Creates a new header widget.
-    pub fn new(connection_info: Option<&'a str>, spinner: Option<&'a Spinner>) -> Self {
+    pub fn new(
+        connection_info: Option<&'a str>,
+        spinner: Option<&'a Spinner>,
+        is_connected: bool,
+    ) -> Self {
         Self {
             connection_info,
             spinner,
+            is_connected,
         }
     }
 }
@@ -56,14 +62,27 @@ impl Widget for Header<'_> {
             buf.set_string(spinner_x, area.y, &spinner_text, spinner_style);
         }
 
-        // Right side: connection info
+        // Right side: connection status indicator and info
         if let Some(info) = self.connection_info {
-            let right_text = format!("[db: {}] ", info);
+            // Connection status dot
+            let status_dot = if self.is_connected { "●" } else { "○" };
+            let status_color = if self.is_connected {
+                Color::Green
+            } else {
+                Color::Gray
+            };
+            let status_style = Style::default().bg(Color::Blue).fg(status_color);
+
+            let right_text = format!(" {} [db: {}] ", status_dot, info);
             let right_width = right_text.len() as u16;
             if right_width < area.width {
                 let right_x = area.right().saturating_sub(right_width);
-                let right_span = Span::styled(right_text, style);
-                buf.set_span(right_x, area.y, &right_span, right_width);
+                // Render the status dot with its color
+                buf.set_string(right_x, area.y, " ", style);
+                buf.set_string(right_x + 1, area.y, status_dot, status_style);
+                // Render the rest with normal style
+                let db_text = format!(" [db: {}] ", info);
+                buf.set_string(right_x + 2, area.y, &db_text, style);
             }
         }
     }

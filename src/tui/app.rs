@@ -287,6 +287,8 @@ pub struct App {
     pub show_help: bool,
     /// Whether to ring the terminal bell on next render (for long query notification).
     pub ring_bell: bool,
+    /// Whether the database connection is active/healthy.
+    pub is_connected: bool,
 }
 
 /// A query that is pending user confirmation.
@@ -331,6 +333,7 @@ impl App {
             rerun_requested: false,
             show_help: false,
             ring_bell: false,
+            is_connected: true, // Assume connected initially
         }
     }
 
