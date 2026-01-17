@@ -232,6 +232,12 @@ impl InputState {
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
+
+    /// Clears the input text and resets cursor.
+    pub fn clear(&mut self) {
+        self.text.clear();
+        self.cursor = 0;
+    }
 }
 
 /// Main application state.
@@ -799,6 +805,14 @@ impl App {
             // Exit to Normal mode
             KeyCode::Esc => {
                 self.input_mode = InputMode::Normal;
+            }
+            // Clear input with Ctrl+U
+            KeyCode::Char('u')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.input.clear();
             }
             // History navigation
             KeyCode::Up => {
