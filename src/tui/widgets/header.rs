@@ -2,6 +2,7 @@
 //!
 //! Displays the application name, version, and database connection info.
 
+use super::spinner::Spinner;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -13,12 +14,16 @@ use ratatui::{
 /// Header bar widget.
 pub struct Header<'a> {
     connection_info: Option<&'a str>,
+    spinner: Option<&'a Spinner>,
 }
 
 impl<'a> Header<'a> {
     /// Creates a new header widget.
-    pub fn new(connection_info: Option<&'a str>) -> Self {
-        Self { connection_info }
+    pub fn new(connection_info: Option<&'a str>, spinner: Option<&'a Spinner>) -> Self {
+        Self {
+            connection_info,
+            spinner,
+        }
     }
 }
 
@@ -38,6 +43,18 @@ impl Widget for Header<'_> {
         let left_text = " Glance v0.1.0";
         let left_span = Span::styled(left_text, style);
         buf.set_span(area.x, area.y, &left_span, area.width);
+
+        // Center: spinner if active
+        if let Some(spinner) = self.spinner {
+            let spinner_text = spinner.display();
+            let spinner_style = Style::default()
+                .bg(Color::Blue)
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD);
+            let spinner_width = spinner_text.len() as u16;
+            let spinner_x = area.x + (area.width.saturating_sub(spinner_width)) / 2;
+            buf.set_string(spinner_x, area.y, &spinner_text, spinner_style);
+        }
 
         // Right side: connection info
         if let Some(info) = self.connection_info {

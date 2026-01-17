@@ -4,6 +4,7 @@
 
 use super::history::InputHistory;
 use super::widgets::command_palette::CommandPaletteState;
+use super::widgets::spinner::Spinner;
 use crate::config::ConnectionConfig;
 use crate::db::QueryResult;
 use std::time::{Duration, Instant};
@@ -242,6 +243,8 @@ pub struct App {
     pub pending_query: Option<PendingQuery>,
     /// Whether the application is currently processing (waiting for LLM/DB).
     pub is_processing: bool,
+    /// Active spinner for visual feedback during async operations.
+    pub spinner: Option<Spinner>,
     /// Last executed SQL query (for copy/re-run features).
     pub last_executed_sql: Option<String>,
     /// Timestamp of last Esc press (for double-Esc detection).
@@ -286,6 +289,7 @@ impl App {
             connection_info,
             pending_query: None,
             is_processing: false,
+            spinner: None,
             last_executed_sql: None,
             last_esc_time: None,
             toast: None,
@@ -296,6 +300,27 @@ impl App {
     pub fn show_toast(&mut self, message: impl Into<String>) {
         let expiry = Instant::now() + Duration::from_secs(3);
         self.toast = Some((message.into(), expiry));
+    }
+
+    /// Starts the LLM thinking spinner.
+    #[allow(dead_code)] // Called from TUI event loop
+    pub fn start_thinking(&mut self) {
+        self.is_processing = true;
+        self.spinner = Some(Spinner::thinking());
+    }
+
+    /// Starts the query execution spinner.
+    #[allow(dead_code)] // Called from TUI event loop
+    pub fn start_executing(&mut self) {
+        self.is_processing = true;
+        self.spinner = Some(Spinner::executing());
+    }
+
+    /// Stops any active spinner.
+    #[allow(dead_code)] // Called from TUI event loop
+    pub fn stop_spinner(&mut self) {
+        self.is_processing = false;
+        self.spinner = None;
     }
 
     /// Clears expired toast notifications.

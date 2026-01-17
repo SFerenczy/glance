@@ -75,7 +75,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
 /// Renders the header bar.
 fn render_header(frame: &mut Frame, area: Rect, app: &App) {
-    let widget = header::Header::new(app.connection_info.as_deref());
+    let widget = header::Header::new(app.connection_info.as_deref(), app.spinner.as_ref());
     frame.render_widget(widget, area);
 }
 
