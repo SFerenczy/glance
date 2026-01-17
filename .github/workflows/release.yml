@@ -4,9 +4,16 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to simulate (e.g., v0.1.0-test)"
+        required: true
+        default: "v0.0.0-test"
 
 env:
   CARGO_TERM_COLOR: always
+  VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
   build:
@@ -64,20 +71,20 @@ jobs:
         if: matrix.archive == 'tar.gz'
         run: |
           cd target/${{ matrix.target }}/release
-          tar -czvf ../../../glance-${{ github.ref_name }}-${{ matrix.target }}.tar.gz glance
+          tar -czvf ../../../glance-${{ env.VERSION }}-${{ matrix.target }}.tar.gz glance
           cd ../../..
 
       - name: Create archive (Windows)
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/glance.exe -DestinationPath glance-${{ github.ref_name }}-${{ matrix.target }}.zip
+          Compress-Archive -Path target/${{ matrix.target }}/release/glance.exe -DestinationPath glance-${{ env.VERSION }}-${{ matrix.target }}.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: glance-${{ matrix.target }}
-          path: glance-${{ github.ref_name }}-${{ matrix.target }}.*
+          path: glance-${{ env.VERSION }}-${{ matrix.target }}.*
 
   release:
     name: Create Release
@@ -92,11 +99,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: artifacts/*
           generate_release_notes: true
           draft: true
         env:
