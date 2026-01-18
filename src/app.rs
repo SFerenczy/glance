@@ -549,10 +549,15 @@ impl Orchestrator {
             "add" => {
                 if name.is_empty() {
                     return Ok(InputResult::Messages(
-                        vec![ChatMessage::Error("Usage: /conn add <name>".to_string())],
+                        vec![ChatMessage::Error("Usage: /conn add <name> host=<host> port=<port> database=<db> user=<user> [password=<pwd>]".to_string())],
                         None,
                     ));
                 }
+                // If name contains '=', it has inline parameters - parse them
+                if name.contains('=') {
+                    return self.handle_conn_add_with_params(name).await;
+                }
+                // Otherwise show help for adding this connection
                 Ok(InputResult::Messages(
                     vec![ChatMessage::System(format!(
                         "To add connection '{}', provide details in format:\n\
