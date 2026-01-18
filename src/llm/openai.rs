@@ -31,7 +31,7 @@ const RETRY_BASE_DELAY_MS: u64 = 1000;
 pub struct OpenAiConfig {
     /// API key for authentication.
     pub api_key: String,
-    /// Model to use (e.g., "gpt-4o", "gpt-4o-mini").
+    /// Model to use (e.g., "gpt-5", "gpt-5-mini").
     pub model: String,
     /// Request timeout in seconds.
     pub timeout_secs: u64,
@@ -75,12 +75,12 @@ impl OpenAiClient {
     /// Creates a client from environment variables.
     ///
     /// Reads `OPENAI_API_KEY` for the API key.
-    /// Optionally reads `OPENAI_MODEL` for the model (defaults to "gpt-4o").
+    /// Optionally reads `OPENAI_MODEL` for the model (defaults to "gpt-5").
     pub fn from_env() -> Result<Self> {
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| GlanceError::llm("OPENAI_API_KEY environment variable not set"))?;
 
-        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
+        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-5".to_string());
 
         Self::new(OpenAiConfig::new(api_key, model))
     }
@@ -380,15 +380,15 @@ mod tests {
 
     #[test]
     fn test_config_new() {
-        let config = OpenAiConfig::new("sk-test", "gpt-4o");
+        let config = OpenAiConfig::new("sk-test", "gpt-5");
         assert_eq!(config.api_key, "sk-test");
-        assert_eq!(config.model, "gpt-4o");
+        assert_eq!(config.model, "gpt-5");
         assert_eq!(config.timeout_secs, DEFAULT_TIMEOUT_SECS);
     }
 
     #[test]
     fn test_config_with_timeout() {
-        let config = OpenAiConfig::new("sk-test", "gpt-4o").with_timeout(60);
+        let config = OpenAiConfig::new("sk-test", "gpt-5").with_timeout(60);
         assert_eq!(config.timeout_secs, 60);
     }
 

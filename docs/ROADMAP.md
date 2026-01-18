@@ -25,7 +25,7 @@ The minimum viable product: connect to a Postgres database and query it via natu
 
 ### LLM Integration
 
-- [ ] OpenAI API support (gpt-4o, gpt-4o-mini)
+- [ ] OpenAI API support (gpt-5, gpt-5-mini)
 - [ ] Anthropic API support (claude-3.5-sonnet)
 - [ ] API key configuration via environment variable or config file
 

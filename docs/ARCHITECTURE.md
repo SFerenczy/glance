@@ -196,7 +196,7 @@ Configuration file: `~/.config/db-glance/config.toml`
 ```toml
 [llm]
 provider = "openai"          # or "anthropic"
-model = "gpt-4o"
+model = "gpt-5"
 # api_key loaded from OPENAI_API_KEY or ANTHROPIC_API_KEY env var
 
 [connections.default]

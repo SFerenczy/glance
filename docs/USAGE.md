@@ -183,7 +183,7 @@ These show a strong warning:
 # LLM Configuration
 [llm]
 provider = "openai"           # "openai" or "anthropic"
-model = "gpt-4o"              # Model to use
+model = "gpt-5"              # Model to use
 
 # Default connection (used when no --connection specified)
 [connections.default]

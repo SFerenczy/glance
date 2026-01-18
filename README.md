@@ -79,7 +79,7 @@ Create `~/.config/db-glance/config.toml`:
 ```toml
 [llm]
 provider = "openai"
-model = "gpt-4o"
+model = "gpt-5"
 
 [connections.default]
 host = "localhost"

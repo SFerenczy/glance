@@ -30,7 +30,7 @@ pub struct LlmConfig {
     #[serde(default = "default_provider")]
     pub provider: String,
 
-    /// Model name (e.g., "gpt-4o", "claude-3-5-sonnet-latest").
+    /// Model name (e.g., "gpt-5", "claude-3-5-sonnet-latest").
     #[serde(default = "default_model")]
     pub model: String,
 }
@@ -40,7 +40,7 @@ fn default_provider() -> String {
 }
 
 fn default_model() -> String {
-    "gpt-4o".to_string()
+    "gpt-5".to_string()
 }
 
 impl Default for LlmConfig {
@@ -284,7 +284,7 @@ database = "mydb"
     fn test_default_llm_config() {
         let config = Config::default();
         assert_eq!(config.llm.provider, "openai");
-        assert_eq!(config.llm.model, "gpt-4o");
+        assert_eq!(config.llm.model, "gpt-5");
     }
 
     #[test]
