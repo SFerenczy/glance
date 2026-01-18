@@ -128,6 +128,8 @@ impl<'a> ResultTable<'a> {
     /// Renders a horizontal border line.
     fn render_border(&self, widths: &[usize], left: char, mid: char, right: char) -> Line<'a> {
         let mut border = String::new();
+        // Add spacing for row number column (4 chars: "{:>3} ")
+        border.push_str("    ");
         border.push(left);
 
         for (i, &width) in widths.iter().enumerate() {
@@ -145,6 +147,13 @@ impl<'a> ResultTable<'a> {
     /// Renders the header row with column names.
     fn render_header_row(&self, widths: &[usize]) -> Line<'a> {
         let mut spans = Vec::new();
+        // Add header for row number column (matches "{:>3} " format in data rows)
+        spans.push(Span::styled(
+            "  # ",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ));
         spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
 
         for (i, col) in self.result.columns.iter().enumerate() {
