@@ -10,7 +10,7 @@ db-down:
 
 # Run all tests
 test: db
-    cargo test
+    cargo nextest run
 
 # Run tests with Ollama integration
 test-integration: db
@@ -25,11 +25,14 @@ check:
 fmt:
     cargo fmt
 
-# Run all CI checks locally (precommit hook)
-precommit: db
+# Quick check (no tests)
+quick:
     cargo fmt --check
-    cargo clippy -- -D warnings
-    cargo test --verbose
+    cargo clippy --all-targets -- -D warnings
+
+# Run all CI checks locally (precommit hook)
+precommit: db quick
+    cargo nextest run
 
 # Run the application
 run:

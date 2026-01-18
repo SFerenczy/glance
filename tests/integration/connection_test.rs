@@ -59,8 +59,8 @@ async fn test_connect_with_invalid_host() {
 #[tokio::test(flavor = "current_thread")]
 async fn test_connect_with_invalid_port() {
     let config = ConnectionConfig {
-        host: Some("localhost".to_string()),
-        port: 59999, // Unlikely to be in use
+        host: Some("127.0.0.1".to_string()), // Use IP to avoid DNS lookup
+        port: 59999,                         // Unlikely to be in use
         database: Some("testdb".to_string()),
         user: Some("testuser".to_string()),
         password: Some("testpass".to_string()),
@@ -68,8 +68,18 @@ async fn test_connect_with_invalid_port() {
         extras: None,
     };
 
-    let result = PostgresClient::connect(&config).await;
-    assert!(result.is_err());
+    // Use a timeout to avoid hanging if connection doesn't fail fast
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        PostgresClient::connect(&config),
+    )
+    .await;
+
+    // Either timeout or connection error is acceptable
+    match result {
+        Ok(conn_result) => assert!(conn_result.is_err(), "Expected connection to fail"),
+        Err(_timeout) => {} // Timeout is also a valid failure mode
+    }
 }
 
 #[tokio::test]

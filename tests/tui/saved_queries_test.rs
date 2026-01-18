@@ -2,21 +2,7 @@
 //!
 //! Tests /savequery, /queries, /usequery, and /query delete commands.
 
-use std::process::Command;
-
-fn run_headless(args: &[&str]) -> (i32, String, String) {
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--"])
-        .args(args)
-        .output()
-        .expect("Failed to execute command");
-
-    let exit_code = output.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    (exit_code, stdout, stderr)
-}
+use super::common::run_headless;
 
 #[test]
 fn test_queries_list_empty() {
