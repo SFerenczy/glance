@@ -176,6 +176,31 @@ impl StateDb {
     pub async fn close(&self) {
         self.pool.close().await;
     }
+
+    /// Creates an in-memory state database for testing.
+    pub async fn open_in_memory() -> Result<Self> {
+        let secret_storage = SecretStorage::new();
+
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .map_err(|e| GlanceError::persistence(format!("Invalid memory database: {e}")))?
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .map_err(|e| {
+                GlanceError::persistence(format!("Failed to create in-memory database: {e}"))
+            })?;
+
+        migrations::run_migrations(&pool).await?;
+
+        Ok(Self {
+            pool,
+            db_path: PathBuf::from(":memory:"),
+            secret_storage,
+        })
+    }
 }
 
 #[cfg(test)]

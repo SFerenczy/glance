@@ -3,10 +3,12 @@
 //! Provides a trait-based interface for database operations, allowing
 //! different database backends to be used interchangeably.
 
+mod mock;
 mod postgres;
 mod schema;
 mod types;
 
+pub use mock::MockDatabaseClient;
 #[allow(unused_imports)]
 pub use postgres::PostgresClient;
 pub use schema::{Column, ForeignKey, Index, Schema, Table};

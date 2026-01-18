@@ -120,6 +120,68 @@ impl Orchestrator {
         }
     }
 
+    /// Creates an LLM client using the persisted API key (with env var fallback).
+    async fn create_llm_client(
+        provider: LlmProvider,
+        state_db: Option<&Arc<StateDb>>,
+    ) -> Result<Box<dyn LlmClient>> {
+        // Try to get API key from persistence first
+        let persisted_key = if let Some(db) = state_db {
+            let settings = persistence::llm_settings::get_llm_settings(db.pool()).await?;
+            persistence::llm_settings::get_api_key(db.pool(), &settings.provider, db.secrets())
+                .await?
+        } else {
+            None
+        };
+
+        match provider {
+            LlmProvider::OpenAi => {
+                use crate::llm::{OpenAiClient, OpenAiConfig};
+                let api_key = persisted_key
+                    .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                    .ok_or_else(|| {
+                        GlanceError::llm(
+                            "No API key configured. Use /llm key <key> or set OPENAI_API_KEY.",
+                        )
+                    })?;
+                let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
+                Ok(Box::new(OpenAiClient::new(OpenAiConfig::new(
+                    api_key, model,
+                ))?))
+            }
+            LlmProvider::Anthropic => {
+                use crate::llm::{AnthropicClient, AnthropicConfig};
+                let api_key = persisted_key
+                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+                    .ok_or_else(|| {
+                        GlanceError::llm(
+                            "No API key configured. Use /llm key <key> or set ANTHROPIC_API_KEY.",
+                        )
+                    })?;
+                let model = std::env::var("ANTHROPIC_MODEL")
+                    .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
+                Ok(Box::new(AnthropicClient::new(AnthropicConfig::new(
+                    api_key, model,
+                ))?))
+            }
+            LlmProvider::Ollama => {
+                use crate::llm::OllamaClient;
+                Ok(Box::new(OllamaClient::from_env()?))
+            }
+            LlmProvider::Mock => Ok(Box::new(MockLlmClient::new())),
+        }
+    }
+
+    /// Rebuilds the LLM client with current settings from persistence.
+    async fn rebuild_llm_client(&mut self) -> Result<()> {
+        if let Some(ref state_db) = self.state_db {
+            let settings = persistence::llm_settings::get_llm_settings(state_db.pool()).await?;
+            let provider = settings.provider.parse::<LlmProvider>().unwrap_or_default();
+            self.llm = Self::create_llm_client(provider, Some(state_db)).await?;
+        }
+        Ok(())
+    }
+
     /// Creates an orchestrator by connecting to the database and initializing components.
     pub async fn connect(connection: &ConnectionConfig, llm_provider: LlmProvider) -> Result<Self> {
         // Connect to database
@@ -128,25 +190,11 @@ impl Orchestrator {
         // Introspect schema
         let schema = db.introspect_schema().await?;
 
-        // Create LLM client based on provider
-        let llm: Box<dyn LlmClient> = match llm_provider {
-            LlmProvider::OpenAi => {
-                use crate::llm::OpenAiClient;
-                Box::new(OpenAiClient::from_env()?)
-            }
-            LlmProvider::Anthropic => {
-                use crate::llm::AnthropicClient;
-                Box::new(AnthropicClient::from_env()?)
-            }
-            LlmProvider::Ollama => {
-                use crate::llm::OllamaClient;
-                Box::new(OllamaClient::from_env()?)
-            }
-            LlmProvider::Mock => Box::new(MockLlmClient::new()),
-        };
-
-        // Open state database
+        // Open state database first so we can use persisted API key
         let state_db = StateDb::open_default().await.ok().map(Arc::new);
+
+        // Create LLM client (using persisted key if available)
+        let llm = Self::create_llm_client(llm_provider, state_db.as_ref()).await?;
 
         Ok(Self {
             db: Some(Box::new(db)),
@@ -168,6 +216,47 @@ impl Orchestrator {
             schema,
             state_db: None,
             current_connection_name: None,
+            last_executed_sql: None,
+            conversation: Conversation::new(),
+        }
+    }
+
+    /// Creates an orchestrator with a mock LLM and state database for testing.
+    #[allow(dead_code)]
+    pub fn with_mock_llm_and_state_db(
+        db: Option<Box<dyn DatabaseClient>>,
+        schema: Schema,
+        state_db: Arc<StateDb>,
+    ) -> Self {
+        Self {
+            db,
+            llm: Box::new(MockLlmClient::new()),
+            schema,
+            state_db: Some(state_db),
+            current_connection_name: Some("test".to_string()),
+            last_executed_sql: None,
+            conversation: Conversation::new(),
+        }
+    }
+
+    /// Creates a fully mocked orchestrator for headless testing.
+    #[allow(dead_code)]
+    pub async fn for_headless_testing(state_db: Arc<StateDb>) -> Self {
+        use crate::db::MockDatabaseClient;
+
+        // Create a test connection entry in the database to satisfy foreign key constraints
+        let _ = sqlx::query(
+            "INSERT OR IGNORE INTO connections (name, database) VALUES ('test', 'testdb')",
+        )
+        .execute(state_db.pool())
+        .await;
+
+        Self {
+            db: Some(Box::new(MockDatabaseClient::new())),
+            llm: Box::new(MockLlmClient::new()),
+            schema: Schema::default(),
+            state_db: Some(state_db),
+            current_connection_name: Some("test".to_string()),
             last_executed_sql: None,
             conversation: Conversation::new(),
         }
@@ -1266,6 +1355,22 @@ impl Orchestrator {
                 match persistence::llm_settings::set_provider(state_db.pool(), value).await {
                     Ok(()) => {
                         self.conversation.clear();
+                        // Rebuild LLM client with new provider
+                        if let Err(e) = self.rebuild_llm_client().await {
+                            return Ok(InputResult::Messages(
+                                vec![
+                                    ChatMessage::System(format!(
+                                        "LLM provider set to '{}'. Conversation cleared.",
+                                        value
+                                    )),
+                                    ChatMessage::Error(format!(
+                                        "Warning: Could not initialize LLM client: {}",
+                                        e
+                                    )),
+                                ],
+                                None,
+                            ));
+                        }
                         Ok(InputResult::Messages(
                             vec![ChatMessage::System(format!(
                                 "LLM provider set to '{}'. Conversation cleared.",
@@ -1307,13 +1412,75 @@ impl Orchestrator {
                     )),
                 }
             }
-            "key" => Ok(InputResult::Messages(
-                vec![ChatMessage::System(
-                    "API key input not yet implemented. Set via environment variable for now."
-                        .to_string(),
-                )],
-                None,
-            )),
+            "key" => {
+                if value.is_empty() {
+                    // Show current key status
+                    let settings =
+                        persistence::llm_settings::get_llm_settings(state_db.pool()).await?;
+                    let key_status = match settings.api_key_storage {
+                        persistence::llm_settings::ApiKeyStorage::None => {
+                            "Not configured".to_string()
+                        }
+                        persistence::llm_settings::ApiKeyStorage::Keyring => {
+                            "Configured (stored in keyring)".to_string()
+                        }
+                        persistence::llm_settings::ApiKeyStorage::Plaintext => {
+                            "Configured (stored in plaintext - not recommended)".to_string()
+                        }
+                    };
+                    return Ok(InputResult::Messages(
+                        vec![ChatMessage::System(format!(
+                            "API key status: {}\n\nUse /llm key <api_key> to set a new key.",
+                            key_status
+                        ))],
+                        None,
+                    ));
+                }
+
+                // Set the API key
+                let provider = persistence::llm_settings::get_llm_settings(state_db.pool())
+                    .await?
+                    .provider;
+                match persistence::llm_settings::set_api_key(
+                    state_db.pool(),
+                    &provider,
+                    value,
+                    state_db.secrets(),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        let masked = persistence::SecretStorage::mask_secret(value);
+                        // Rebuild LLM client with new key
+                        if let Err(e) = self.rebuild_llm_client().await {
+                            return Ok(InputResult::Messages(
+                                vec![
+                                    ChatMessage::System(format!(
+                                        "API key set for provider '{}': {}",
+                                        provider, masked
+                                    )),
+                                    ChatMessage::Error(format!(
+                                        "Warning: Could not initialize LLM client: {}",
+                                        e
+                                    )),
+                                ],
+                                None,
+                            ));
+                        }
+                        Ok(InputResult::Messages(
+                            vec![ChatMessage::System(format!(
+                                "API key set for provider '{}': {}",
+                                provider, masked
+                            ))],
+                            None,
+                        ))
+                    }
+                    Err(e) => Ok(InputResult::Messages(
+                        vec![ChatMessage::Error(e.to_string())],
+                        None,
+                    )),
+                }
+            }
             _ => {
                 let settings = persistence::llm_settings::get_llm_settings(state_db.pool()).await?;
                 Ok(InputResult::Messages(

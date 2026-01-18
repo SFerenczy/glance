@@ -1,0 +1,84 @@
+# History Feature BDD Test Script
+# Tests FR-4: Query History Persistence from v0.2b spec
+
+# Feature: Query History Persistence
+#   As a user
+#   I want my past queries to be available after restarting the app
+#   So that I can review and reuse previous queries
+
+# Scenario 1: Empty history shows appropriate message
+# Given a fresh database with no history
+# When I run /history
+# Then I should see "No history entries found"
+
+type:/history
+key:enter
+wait:100ms
+assert:contains:No history entries found
+
+# Scenario 2: Execute a query and verify it appears in history
+# Given I am connected to a database
+# When I execute a SQL query
+# And I run /history
+# Then I should see the query in the history list
+
+type:/sql SELECT 1 as test
+key:enter
+wait:200ms
+
+# Now check history
+type:/history
+key:enter
+wait:100ms
+assert:contains:Query history
+
+# Scenario 3: History shows query status indicators
+# Given I have executed queries
+# When I view history
+# Then I should see status indicators (✓ for success)
+
+assert:contains:SELECT 1
+
+# Scenario 4: History clear command works
+# Given I have history entries
+# When I run /history clear
+# Then the history should be cleared
+
+type:/history clear
+key:enter
+wait:100ms
+assert:contains:Cleared
+
+# Verify history is now empty
+type:/history
+key:enter
+wait:100ms
+assert:contains:No history entries found
+
+# Scenario 5: History with --limit filter
+# Given I have multiple history entries
+# When I run /history --limit 1
+# Then I should see only 1 entry
+
+type:/sql SELECT 2 as second
+key:enter
+wait:200ms
+
+type:/sql SELECT 3 as third
+key:enter
+wait:200ms
+
+type:/history --limit 1
+key:enter
+wait:100ms
+assert:contains:Query history
+
+# Scenario 6: History with --text filter
+# Given I have queries with different content
+# When I run /history --text second
+# Then I should see only matching queries
+
+type:/history --text second
+key:enter
+wait:100ms
+assert:contains:second

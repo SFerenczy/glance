@@ -11,12 +11,16 @@ pub use events::{Event, EventParser};
 pub use output::OutputFormat;
 pub use output::{HeadlessOutput, ScreenRenderer};
 
+use crate::app::{InputResult, Orchestrator};
 use crate::cli::Cli;
 use crate::error::{GlanceError, Result};
-use crate::tui::app::App;
+use crate::persistence::StateDb;
+use crate::tui::app::{App, ChatMessage};
 use crate::tui::ui;
+use crossterm::event::KeyCode;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Configuration for headless mode execution.
@@ -37,13 +41,9 @@ pub struct HeadlessConfig {
 impl HeadlessConfig {
     /// Creates a HeadlessConfig from CLI arguments.
     pub fn from_cli(cli: &Cli) -> Result<Self> {
-        let (width, height) = cli
-            .parse_screen_size()
-            .map_err(GlanceError::config)?;
+        let (width, height) = cli.parse_screen_size().map_err(GlanceError::config)?;
 
-        let output_format = cli
-            .parse_output_format()
-            .map_err(GlanceError::config)?;
+        let output_format = cli.parse_output_format().map_err(GlanceError::config)?;
 
         Ok(Self {
             width,
@@ -123,6 +123,7 @@ pub struct HeadlessRunner {
     config: HeadlessConfig,
     terminal: Terminal<TestBackend>,
     app: App,
+    orchestrator: Option<Orchestrator>,
     events: Vec<Event>,
     frames: Vec<Frame>,
     start_time: Instant,
@@ -143,12 +144,19 @@ impl HeadlessRunner {
             config,
             terminal,
             app,
+            orchestrator: None,
             events: Vec::new(),
             frames: Vec::new(),
             start_time: Instant::now(),
             assertions_passed: 0,
             assertions_failed: 0,
         })
+    }
+
+    /// Sets the orchestrator for command processing.
+    pub fn with_orchestrator(mut self, orchestrator: Orchestrator) -> Self {
+        self.orchestrator = Some(orchestrator);
+        self
     }
 
     /// Loads events from a string (comma-separated or newline-separated).
@@ -176,7 +184,7 @@ impl HeadlessRunner {
     }
 
     /// Runs the headless execution and returns the result.
-    pub fn run(mut self) -> Result<HeadlessResult> {
+    pub async fn run(mut self) -> Result<HeadlessResult> {
         self.start_time = Instant::now();
 
         // Capture initial frame
@@ -191,8 +199,12 @@ impl HeadlessRunner {
             // Handle the event
             match &event {
                 Event::Key(key_event) => {
-                    self.app
-                        .handle_event(crate::tui::Event::Key(*key_event));
+                    // Special handling for Enter key when orchestrator is available
+                    if key_event.code == KeyCode::Enter && self.orchestrator.is_some() {
+                        self.handle_enter_with_orchestrator().await?;
+                    } else {
+                        self.app.handle_event(crate::tui::Event::Key(*key_event));
+                    }
                 }
                 Event::Type(text) => {
                     for c in text.chars() {
@@ -200,7 +212,7 @@ impl HeadlessRunner {
                     }
                 }
                 Event::Wait(duration) => {
-                    std::thread::sleep(*duration);
+                    tokio::time::sleep(*duration).await;
                 }
                 Event::Resize(w, h) => {
                     self.terminal
@@ -261,6 +273,66 @@ impl HeadlessRunner {
         })
     }
 
+    /// Handles Enter key press with orchestrator integration.
+    async fn handle_enter_with_orchestrator(&mut self) -> Result<()> {
+        if let Some(input) = self.app.submit_input() {
+            // Add user message to chat
+            self.app.add_message(ChatMessage::User(input.clone()));
+            self.app.is_processing = true;
+
+            // Process input through orchestrator
+            if let Some(ref mut orchestrator) = self.orchestrator {
+                match orchestrator.handle_input(&input).await {
+                    Ok(result) => {
+                        self.handle_input_result(result);
+                    }
+                    Err(e) => {
+                        self.app.add_message(ChatMessage::Error(e.to_string()));
+                    }
+                }
+            }
+            self.app.is_processing = false;
+        }
+        Ok(())
+    }
+
+    /// Handles the result of processing user input.
+    fn handle_input_result(&mut self, result: InputResult) {
+        match result {
+            InputResult::None => {}
+            InputResult::Messages(messages, log_entry) => {
+                for msg in messages {
+                    self.app.add_message(msg);
+                }
+                if let Some(entry) = log_entry {
+                    self.app.add_query_log(entry);
+                }
+            }
+            InputResult::NeedsConfirmation {
+                sql,
+                classification,
+            } => {
+                self.app.set_pending_query(sql, classification);
+            }
+            InputResult::Exit => {
+                self.app.running = false;
+            }
+            InputResult::ToggleVimMode => {
+                self.app.toggle_vim_mode();
+            }
+            InputResult::ConnectionSwitch {
+                messages,
+                connection_info,
+            } => {
+                for msg in messages {
+                    self.app.add_message(msg);
+                }
+                self.app.connection_info = Some(connection_info);
+                self.app.is_connected = true;
+            }
+        }
+    }
+
     /// Renders the current screen to a string.
     fn render_screen(&self) -> Result<String> {
         let buffer = self.terminal.backend().buffer();
@@ -290,8 +362,7 @@ impl HeadlessRunner {
 /// Runs headless mode from CLI arguments.
 pub async fn run_headless(cli: &Cli) -> Result<i32> {
     // Validate headless arguments
-    cli.validate_headless()
-        .map_err(GlanceError::config)?;
+    cli.validate_headless().map_err(GlanceError::config)?;
 
     let config = HeadlessConfig::from_cli(cli)?;
     let mut runner = HeadlessRunner::new(config.clone())?;
@@ -303,8 +374,15 @@ pub async fn run_headless(cli: &Cli) -> Result<i32> {
         runner.load_script(script_path)?;
     }
 
+    // Create orchestrator with state database if mock-db is enabled
+    if cli.mock_db {
+        let state_db = StateDb::open_in_memory().await?;
+        let orchestrator = Orchestrator::for_headless_testing(Arc::new(state_db)).await;
+        runner = runner.with_orchestrator(orchestrator);
+    }
+
     // Run
-    let result = runner.run()?;
+    let result = runner.run().await?;
 
     // Generate output
     let output = HeadlessOutput::new(config.output_format);

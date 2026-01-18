@@ -1,0 +1,67 @@
+# FR-5: Saved Queries & Tags
+# Tests /savequery, /queries, /usequery, and /query delete commands
+
+# Scenario: List saved queries (empty initially)
+type:/queries
+key:enter
+wait:100ms
+assert:contains:No saved queries found
+
+# Scenario: Execute a query first (to have something to save)
+type:/sql SELECT * FROM users
+key:enter
+wait:100ms
+
+# Scenario: Save the last executed query with tags
+type:/savequery get_users #users #select
+key:enter
+wait:100ms
+assert:contains:Query saved as 'get_users'
+
+# Scenario: List saved queries (should show our query)
+type:/queries
+key:enter
+wait:100ms
+assert:contains:get_users
+assert:contains:#users
+assert:contains:#select
+
+# Scenario: Filter queries by tag
+type:/queries --tag users
+key:enter
+wait:100ms
+assert:contains:get_users
+
+# Scenario: Use a saved query (loads into input)
+type:/usequery get_users
+key:enter
+wait:100ms
+assert:contains:Loaded query 'get_users'
+assert:contains:/sql SELECT * FROM users
+
+# Scenario: Save another query
+type:/sql SELECT COUNT(*) FROM orders
+key:enter
+wait:100ms
+type:/savequery count_orders #orders #aggregate
+key:enter
+wait:100ms
+assert:contains:Query saved as 'count_orders'
+
+# Scenario: Text search in queries
+type:/queries --text count
+key:enter
+wait:100ms
+assert:contains:count_orders (test)
+
+# Scenario: Delete a saved query
+type:/query delete count_orders
+key:enter
+wait:100ms
+assert:contains:Saved query 'count_orders' deleted
+
+# Scenario: Verify deletion
+type:/queries
+key:enter
+wait:100ms
+assert:contains:get_users (test)

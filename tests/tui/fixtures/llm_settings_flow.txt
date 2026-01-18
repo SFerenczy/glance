@@ -1,0 +1,42 @@
+# FR-7: Dynamic LLM Provider & API Key Setup
+# Tests /llm provider, /llm model, and /llm key commands
+
+# Scenario: View current LLM settings
+type:/llm
+key:enter
+wait:100ms
+assert:contains:LLM settings
+assert:contains:Provider
+
+# Scenario: Set LLM provider to anthropic
+type:/llm provider anthropic
+key:enter
+wait:100ms
+assert:contains:LLM provider set to 'anthropic'
+assert:contains:Conversation cleared
+
+# Scenario: Set LLM model
+type:/llm model claude-3-opus
+key:enter
+wait:100ms
+assert:contains:LLM model set to 'claude-3-opus'
+
+# Scenario: View API key status (not configured)
+type:/llm key
+key:enter
+wait:100ms
+assert:contains:API key status
+assert:contains:Not configured
+
+# Scenario: Set API key (masked output)
+type:/llm key sk-test-1234567890abcdef
+key:enter
+wait:100ms
+assert:contains:API key set for provider
+assert:contains:****...cdef
+
+# Scenario: Verify key is now configured
+type:/llm key
+key:enter
+wait:100ms
+assert:contains:Configured (stored in
