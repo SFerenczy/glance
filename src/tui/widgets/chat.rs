@@ -9,7 +9,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Widget, Wrap},
+    widgets::{Block, Borders, Paragraph, Widget},
 };
 
 /// Chat panel widget.
@@ -39,6 +39,47 @@ impl<'a> ChatPanel<'a> {
         }
     }
 
+    /// Wraps a long line of text into multiple lines based on available width.
+    fn wrap_line(text: &str, max_width: usize) -> Vec<String> {
+        if max_width == 0 {
+            return vec![text.to_string()];
+        }
+
+        let mut wrapped = Vec::new();
+        let mut current_line = String::new();
+        let mut current_width = 0;
+
+        for word in text.split_whitespace() {
+            let word_len = word.len();
+            let space_len = if current_width > 0 { 1 } else { 0 };
+
+            if current_width + space_len + word_len <= max_width {
+                if current_width > 0 {
+                    current_line.push(' ');
+                    current_width += 1;
+                }
+                current_line.push_str(word);
+                current_width += word_len;
+            } else {
+                if !current_line.is_empty() {
+                    wrapped.push(current_line);
+                }
+                current_line = word.to_string();
+                current_width = word_len;
+            }
+        }
+
+        if !current_line.is_empty() {
+            wrapped.push(current_line);
+        }
+
+        if wrapped.is_empty() {
+            wrapped.push(String::new());
+        }
+
+        wrapped
+    }
+
     /// Renders all messages to a vector of lines.
     fn render_messages(&self, available_width: usize) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
@@ -51,19 +92,19 @@ impl<'a> ChatPanel<'a> {
 
             match message {
                 ChatMessage::User(text) => {
-                    lines.extend(self.render_user_message(text));
+                    lines.extend(self.render_user_message(text, available_width));
                 }
                 ChatMessage::Assistant(text) => {
-                    lines.extend(self.render_assistant_message(text));
+                    lines.extend(self.render_assistant_message(text, available_width));
                 }
                 ChatMessage::Result(result) => {
                     lines.extend(self.render_result_message(result, available_width));
                 }
                 ChatMessage::Error(text) => {
-                    lines.extend(self.render_error_message(text));
+                    lines.extend(self.render_error_message(text, available_width));
                 }
                 ChatMessage::System(text) => {
-                    lines.extend(self.render_system_message(text));
+                    lines.extend(self.render_system_message(text, available_width));
                 }
             }
         }
@@ -72,7 +113,7 @@ impl<'a> ChatPanel<'a> {
     }
 
     /// Renders a user message.
-    fn render_user_message(&self, text: &str) -> Vec<Line<'a>> {
+    fn render_user_message(&self, text: &str, available_width: usize) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
 
         // Label
@@ -83,16 +124,20 @@ impl<'a> ChatPanel<'a> {
                 .add_modifier(Modifier::BOLD),
         )));
 
-        // Content
+        // Content - wrap long lines
         for line in text.lines() {
-            lines.push(Line::from(format!("  {}", line)));
+            let prefixed = format!("  {}", line);
+            let wrapped = Self::wrap_line(&prefixed, available_width);
+            for wrapped_line in wrapped {
+                lines.push(Line::from(wrapped_line));
+            }
         }
 
         lines
     }
 
     /// Renders an assistant message.
-    fn render_assistant_message(&self, text: &str) -> Vec<Line<'a>> {
+    fn render_assistant_message(&self, text: &str, available_width: usize) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
 
         // Label
@@ -103,12 +148,16 @@ impl<'a> ChatPanel<'a> {
                 .add_modifier(Modifier::BOLD),
         )));
 
-        // Content
+        // Content - wrap long lines
         for line in text.lines() {
-            lines.push(Line::from(Span::styled(
-                format!("  {}", line),
-                Style::default().fg(Color::White),
-            )));
+            let prefixed = format!("  {}", line);
+            let wrapped = Self::wrap_line(&prefixed, available_width);
+            for wrapped_line in wrapped {
+                lines.push(Line::from(Span::styled(
+                    wrapped_line,
+                    Style::default().fg(Color::White),
+                )));
+            }
         }
 
         lines
@@ -137,7 +186,7 @@ impl<'a> ChatPanel<'a> {
     }
 
     /// Renders an error message.
-    fn render_error_message(&self, text: &str) -> Vec<Line<'a>> {
+    fn render_error_message(&self, text: &str, available_width: usize) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
 
         // Label
@@ -146,27 +195,34 @@ impl<'a> ChatPanel<'a> {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )));
 
-        // Content
+        // Content - wrap long lines
         for line in text.lines() {
-            lines.push(Line::from(Span::styled(
-                format!("  {}", line),
-                Style::default().fg(Color::Red),
-            )));
+            let prefixed = format!("  {}", line);
+            let wrapped = Self::wrap_line(&prefixed, available_width);
+            for wrapped_line in wrapped {
+                lines.push(Line::from(Span::styled(
+                    wrapped_line,
+                    Style::default().fg(Color::Red),
+                )));
+            }
         }
 
         lines
     }
 
     /// Renders a system message.
-    fn render_system_message(&self, text: &str) -> Vec<Line<'a>> {
+    fn render_system_message(&self, text: &str, available_width: usize) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
 
-        // Content (no label for system messages, just styled differently)
+        // Content (no label for system messages, just styled differently) - wrap long lines
         for line in text.lines() {
-            lines.push(Line::from(Span::styled(
-                line.to_string(),
-                Style::default().fg(Color::Yellow),
-            )));
+            let wrapped = Self::wrap_line(line, available_width);
+            for wrapped_line in wrapped {
+                lines.push(Line::from(Span::styled(
+                    wrapped_line,
+                    Style::default().fg(Color::Yellow),
+                )));
+            }
         }
 
         lines
@@ -255,9 +311,7 @@ impl Widget for ChatPanel<'_> {
             .take(available_height)
             .collect();
 
-        let paragraph = Paragraph::new(visible_lines)
-            .block(block)
-            .wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(visible_lines).block(block);
 
         paragraph.render(area, buf);
 

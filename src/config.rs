@@ -131,10 +131,15 @@ impl ConnectionConfig {
         let mut conn_str = String::from("postgres://");
 
         if let Some(user) = &self.user {
-            conn_str.push_str(user);
+            // URL-encode user and password to handle special characters
+            conn_str.push_str(
+                &url::form_urlencoded::byte_serialize(user.as_bytes()).collect::<String>(),
+            );
             if let Some(password) = &self.password {
                 conn_str.push(':');
-                conn_str.push_str(password);
+                conn_str.push_str(
+                    &url::form_urlencoded::byte_serialize(password.as_bytes()).collect::<String>(),
+                );
             }
             conn_str.push('@');
         }
@@ -144,6 +149,14 @@ impl ConnectionConfig {
         conn_str.push_str(&self.port.to_string());
         conn_str.push('/');
         conn_str.push_str(database);
+
+        tracing::debug!(
+            "Generated connection string (password redacted): postgres://{}@{}:{}/{}",
+            self.user.as_deref().unwrap_or("(none)"),
+            host,
+            self.port,
+            database
+        );
 
         Ok(conn_str)
     }

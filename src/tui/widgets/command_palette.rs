@@ -35,6 +35,24 @@ pub const COMMANDS: &[Command] = &[
     Command::new("help", "Show help message"),
     Command::new("quit", "Exit the application"),
     Command::new("exit", "Exit the application"),
+    // Connection management (v0.2b)
+    Command::new("connections", "List saved database connections"),
+    Command::new("connect", "Switch to a saved connection"),
+    Command::new("conn add", "Add a new saved connection"),
+    Command::new("conn edit", "Edit a saved connection"),
+    Command::new("conn delete", "Delete a saved connection"),
+    // Query history (v0.2b)
+    Command::new("history", "Show query history"),
+    Command::new("history clear", "Clear query history"),
+    // Saved queries (v0.2b)
+    Command::new("savequery", "Save current query with name and tags"),
+    Command::new("queries", "List and search saved queries"),
+    Command::new("usequery", "Load a saved query into input"),
+    Command::new("query delete", "Delete a saved query"),
+    // LLM configuration (v0.2b)
+    Command::new("llm provider", "Set LLM provider (openai|anthropic|ollama)"),
+    Command::new("llm key", "Set API key for current provider"),
+    Command::new("llm model", "Set model for current provider"),
 ];
 
 /// State for the command palette.

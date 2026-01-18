@@ -437,6 +437,16 @@ impl Tui {
             InputResult::ToggleVimMode => {
                 app_state.toggle_vim_mode();
             }
+            InputResult::ConnectionSwitch {
+                messages,
+                connection_info,
+            } => {
+                for msg in messages {
+                    app_state.add_message(msg);
+                }
+                app_state.connection_info = Some(connection_info);
+                app_state.is_connected = true;
+            }
         }
     }
 
@@ -465,6 +475,16 @@ impl Tui {
                     }
                     Ok(InputResult::ToggleVimMode) => {
                         app_state.toggle_vim_mode();
+                    }
+                    Ok(InputResult::ConnectionSwitch {
+                        messages,
+                        connection_info,
+                    }) => {
+                        for m in messages {
+                            app_state.add_message(m);
+                        }
+                        app_state.connection_info = Some(connection_info);
+                        app_state.is_connected = true;
                     }
                     Ok(InputResult::None) => {}
                     Err(e) => {

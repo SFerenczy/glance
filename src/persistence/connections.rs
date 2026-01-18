@@ -239,38 +239,57 @@ pub async fn update_connection(
         .as_ref()
         .map(|v| serde_json::to_string(v).unwrap_or_default());
 
-    let (password_storage, password_plaintext) = if let Some(pwd) = password {
-        if secrets.is_secure() {
+    // If password is provided, update it; otherwise keep existing password unchanged
+    let result = if let Some(pwd) = password {
+        let (password_storage, password_plaintext) = if secrets.is_secure() {
             let key = SecretStorage::connection_password_key(&profile.name);
             secrets.store(&key, pwd)?;
             (PasswordStorage::Keyring, None)
         } else {
             (PasswordStorage::Plaintext, Some(pwd.to_string()))
-        }
-    } else {
-        (profile.password_storage.clone(), None)
-    };
+        };
 
-    let result = sqlx::query(
-        r#"
-        UPDATE connections
-        SET database = ?, host = ?, port = ?, username = ?, sslmode = ?, extras = ?,
-            password_storage = ?, password_plaintext = ?, updated_at = datetime('now')
-        WHERE name = ?
-        "#,
-    )
-    .bind(&profile.database)
-    .bind(&profile.host)
-    .bind(profile.port as i32)
-    .bind(&profile.username)
-    .bind(&profile.sslmode)
-    .bind(&extras_json)
-    .bind(password_storage.as_str())
-    .bind(&password_plaintext)
-    .bind(&profile.name)
-    .execute(pool)
-    .await
-    .map_err(|e| GlanceError::persistence(format!("Failed to update connection: {e}")))?;
+        sqlx::query(
+            r#"
+            UPDATE connections
+            SET database = ?, host = ?, port = ?, username = ?, sslmode = ?, extras = ?,
+                password_storage = ?, password_plaintext = ?, updated_at = datetime('now')
+            WHERE name = ?
+            "#,
+        )
+        .bind(&profile.database)
+        .bind(&profile.host)
+        .bind(profile.port as i32)
+        .bind(&profile.username)
+        .bind(&profile.sslmode)
+        .bind(&extras_json)
+        .bind(password_storage.as_str())
+        .bind(&password_plaintext)
+        .bind(&profile.name)
+        .execute(pool)
+        .await
+        .map_err(|e| GlanceError::persistence(format!("Failed to update connection: {e}")))?
+    } else {
+        // Don't touch password fields when password is not being updated
+        sqlx::query(
+            r#"
+            UPDATE connections
+            SET database = ?, host = ?, port = ?, username = ?, sslmode = ?, extras = ?,
+                updated_at = datetime('now')
+            WHERE name = ?
+            "#,
+        )
+        .bind(&profile.database)
+        .bind(&profile.host)
+        .bind(profile.port as i32)
+        .bind(&profile.username)
+        .bind(&profile.sslmode)
+        .bind(&extras_json)
+        .bind(&profile.name)
+        .execute(pool)
+        .await
+        .map_err(|e| GlanceError::persistence(format!("Failed to update connection: {e}")))?
+    };
 
     if result.rows_affected() == 0 {
         return Err(GlanceError::persistence(format!(
@@ -335,11 +354,25 @@ pub async fn get_connection_password(
     match row {
         Some((storage, plaintext)) => {
             let storage_type = PasswordStorage::from_str(&storage);
+            tracing::debug!(
+                "Connection '{}' password_storage={:?}, has_plaintext={}",
+                name,
+                storage_type,
+                plaintext.is_some()
+            );
             match storage_type {
                 PasswordStorage::None => Ok(None),
                 PasswordStorage::Keyring => {
                     let key = SecretStorage::connection_password_key(name);
-                    secrets.retrieve(&key)
+                    let result = secrets.retrieve(&key)?;
+                    if result.is_none() {
+                        tracing::warn!(
+                            "Password for connection '{}' stored in keyring but could not be retrieved. \
+                             Keyring may be unavailable. Try re-adding the connection with /conn edit {} password=<pwd>",
+                            name, name
+                        );
+                    }
+                    Ok(result)
                 }
                 PasswordStorage::Plaintext => Ok(plaintext),
             }

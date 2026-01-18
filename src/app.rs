@@ -74,6 +74,13 @@ pub enum InputResult {
     Exit,
     /// Toggle vim mode.
     ToggleVimMode,
+    /// Connection switched successfully.
+    ConnectionSwitch {
+        /// Messages to display (e.g., "Connected to X").
+        messages: Vec<ChatMessage>,
+        /// New connection display string for the header.
+        connection_info: String,
+    },
 }
 
 /// The main orchestrator that coordinates all components.
@@ -501,10 +508,19 @@ impl Orchestrator {
             port: profile.port,
             database: Some(profile.database.clone()),
             user: profile.username.clone(),
-            password,
+            password: password.clone(),
             sslmode: profile.sslmode.clone(),
             extras: profile.extras.clone(),
         };
+
+        tracing::debug!(
+            "Connecting with: host={:?}, port={}, db={:?}, user={:?}, has_password={}",
+            config.host,
+            config.port,
+            config.database,
+            config.user,
+            config.password.is_some()
+        );
 
         let db = match PostgresClient::connect(&config).await {
             Ok(db) => db,
@@ -530,13 +546,13 @@ impl Orchestrator {
 
         persistence::connections::touch_connection(state_db.pool(), args).await?;
 
-        Ok(InputResult::Messages(
-            vec![ChatMessage::System(format!(
+        Ok(InputResult::ConnectionSwitch {
+            messages: vec![ChatMessage::System(format!(
                 "Connected to {} ({})",
                 args, profile.database
             ))],
-            None,
-        ))
+            connection_info: format!("{} ({})", args, profile.database),
+        })
     }
 
     /// Handles /conn add|edit|delete commands.
@@ -571,10 +587,17 @@ impl Orchestrator {
             "edit" => {
                 if name.is_empty() {
                     return Ok(InputResult::Messages(
-                        vec![ChatMessage::Error("Usage: /conn edit <name>".to_string())],
+                        vec![ChatMessage::Error(
+                            "Usage: /conn edit <name> <field>=<value> ...".to_string(),
+                        )],
                         None,
                     ));
                 }
+                // If name contains '=', it has inline parameters - parse them
+                if name.contains('=') {
+                    return self.handle_conn_edit_with_params(name).await;
+                }
+                // Otherwise show help for editing this connection
                 Ok(InputResult::Messages(
                     vec![ChatMessage::System(format!(
                         "To edit connection '{}', use:\n\
@@ -752,6 +775,105 @@ impl Orchestrator {
                     None,
                 ))
             }
+            Err(e) => Ok(InputResult::Messages(
+                vec![ChatMessage::Error(e.to_string())],
+                None,
+            )),
+        }
+    }
+
+    /// Handles /conn edit <name> with inline parameters.
+    async fn handle_conn_edit_with_params(&mut self, args: &str) -> Result<InputResult> {
+        let mut name = String::new();
+        let mut host = None;
+        let mut port = None;
+        let mut database = None;
+        let mut user = None;
+        let mut password = None;
+        let mut sslmode = None;
+
+        for part in args.split_whitespace() {
+            if let Some((key, value)) = part.split_once('=') {
+                match key {
+                    "host" => host = Some(value.to_string()),
+                    "port" => port = value.parse().ok(),
+                    "database" | "db" => database = Some(value.to_string()),
+                    "user" => user = Some(value.to_string()),
+                    "password" | "pwd" => password = Some(value.to_string()),
+                    "sslmode" => sslmode = Some(value.to_string()),
+                    _ => {}
+                }
+            } else if name.is_empty() {
+                name = part.to_string();
+            }
+        }
+
+        if name.is_empty() {
+            return Ok(InputResult::Messages(
+                vec![ChatMessage::Error(
+                    "Connection name is required.".to_string(),
+                )],
+                None,
+            ));
+        }
+
+        let state_db = match &self.state_db {
+            Some(db) => Arc::clone(db),
+            None => {
+                return Ok(InputResult::Messages(
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
+                    None,
+                ));
+            }
+        };
+
+        // Get existing connection
+        let existing = persistence::connections::get_connection(state_db.pool(), &name).await?;
+        let existing = match existing {
+            Some(p) => p,
+            None => {
+                return Ok(InputResult::Messages(
+                    vec![ChatMessage::Error(format!(
+                        "Connection '{}' not found.",
+                        name
+                    ))],
+                    None,
+                ));
+            }
+        };
+
+        // Merge updates with existing values
+        let updated_profile = persistence::connections::ConnectionProfile {
+            name: name.clone(),
+            database: database.unwrap_or(existing.database),
+            host: host.or(existing.host),
+            port: port.unwrap_or(existing.port),
+            username: user.or(existing.username),
+            sslmode: sslmode.or(existing.sslmode),
+            extras: existing.extras,
+            password_storage: existing.password_storage,
+            created_at: existing.created_at,
+            updated_at: String::new(),
+            last_used_at: existing.last_used_at,
+        };
+
+        match persistence::connections::update_connection(
+            state_db.pool(),
+            &updated_profile,
+            password.as_deref(),
+            state_db.secrets(),
+        )
+        .await
+        {
+            Ok(()) => Ok(InputResult::Messages(
+                vec![ChatMessage::System(format!(
+                    "Connection '{}' updated.",
+                    name
+                ))],
+                None,
+            )),
             Err(e) => Ok(InputResult::Messages(
                 vec![ChatMessage::Error(e.to_string())],
                 None,

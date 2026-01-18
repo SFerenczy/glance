@@ -48,19 +48,35 @@ impl SecretStorage {
         }
     }
 
-    /// Probes whether the OS keyring is available.
+    /// Probes whether the OS keyring is available and persistent.
     fn probe_keyring() -> bool {
         let test_entry = match Entry::new(SERVICE_NAME, "__probe__") {
             Ok(e) => e,
-            Err(_) => return false,
+            Err(e) => {
+                tracing::debug!("Keyring probe: failed to create entry: {}", e);
+                return false;
+            }
         };
+
+        // Check if this is a mock credential (non-persistent)
+        let entry_debug = format!("{:?}", test_entry);
+        if entry_debug.contains("MockCredential") {
+            tracing::debug!(
+                "Keyring probe: detected mock credential backend (non-persistent), treating as unavailable"
+            );
+            return false;
+        }
 
         match test_entry.set_password("test") {
             Ok(()) => {
                 let _ = test_entry.delete_credential();
+                tracing::debug!("Keyring probe: keyring is available");
                 true
             }
-            Err(_) => false,
+            Err(e) => {
+                tracing::debug!("Keyring probe: failed to set password: {}", e);
+                false
+            }
         }
     }
 
@@ -109,6 +125,10 @@ impl SecretStorage {
     /// Retrieves a secret from the keyring.
     pub fn retrieve(&self, key: &str) -> Result<Option<String>> {
         if !self.keyring_available {
+            tracing::debug!(
+                "Keyring not available, cannot retrieve secret for key: {}",
+                key
+            );
             return Ok(None);
         }
 
@@ -116,8 +136,14 @@ impl SecretStorage {
             .map_err(|e| GlanceError::persistence(format!("Failed to access keyring: {e}")))?;
 
         match entry.get_password() {
-            Ok(secret) => Ok(Some(secret)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Ok(secret) => {
+                tracing::debug!("Successfully retrieved secret for key: {}", key);
+                Ok(Some(secret))
+            }
+            Err(keyring::Error::NoEntry) => {
+                tracing::debug!("No keyring entry found for key: {}", key);
+                Ok(None)
+            }
             Err(e) => Err(GlanceError::persistence(format!(
                 "Failed to retrieve secret: {e}"
             ))),
