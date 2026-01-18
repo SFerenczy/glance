@@ -11,6 +11,17 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
+/// Calculates the scroll offset needed to keep the cursor visible.
+///
+/// Returns the number of characters to skip from the start of the text.
+pub fn calculate_scroll_offset(cursor: usize, _text_len: usize, available_width: usize) -> usize {
+    if cursor <= available_width {
+        0
+    } else {
+        cursor.saturating_sub(available_width)
+    }
+}
+
 /// Input bar widget.
 #[allow(dead_code)] // Used for cursor positioning in ui.rs
 pub struct InputBar<'a> {
@@ -69,9 +80,21 @@ impl Widget for InputBar<'_> {
             .add_modifier(Modifier::BOLD);
         let text_style = Style::default();
 
+        // Calculate available width for text (subtract borders and prompt)
+        // Border left (1) + prompt "> " (2) + border right (1) + cursor space (1) = 5
+        let available_width = area.width.saturating_sub(5) as usize;
+        let scroll_offset = calculate_scroll_offset(self.cursor, self.text.len(), available_width);
+
+        // Get the visible portion of text
+        let visible_text = if scroll_offset < self.text.len() {
+            &self.text[scroll_offset..]
+        } else {
+            ""
+        };
+
         let line = Line::from(vec![
             Span::styled("> ", prompt_style),
-            Span::styled(self.text, text_style),
+            Span::styled(visible_text, text_style),
         ]);
 
         let paragraph = Paragraph::new(line).block(block);
@@ -106,5 +129,29 @@ mod tests {
     fn test_input_bar_with_vim_mode() {
         let input = InputBar::new("test", 2, true, InputMode::Normal, true);
         assert!(input.vim_mode_enabled);
+    }
+
+    #[test]
+    fn test_scroll_offset_cursor_within_width() {
+        // Cursor at position 5, width 20 -> no scroll needed
+        assert_eq!(calculate_scroll_offset(5, 10, 20), 0);
+        // Cursor at position 20, width 20 -> no scroll needed
+        assert_eq!(calculate_scroll_offset(20, 30, 20), 0);
+    }
+
+    #[test]
+    fn test_scroll_offset_cursor_beyond_width() {
+        // Cursor at position 25, width 20 -> scroll by 5
+        assert_eq!(calculate_scroll_offset(25, 30, 20), 5);
+        // Cursor at position 50, width 20 -> scroll by 30
+        assert_eq!(calculate_scroll_offset(50, 60, 20), 30);
+    }
+
+    #[test]
+    fn test_scroll_offset_edge_cases() {
+        // Cursor at 0 -> no scroll
+        assert_eq!(calculate_scroll_offset(0, 10, 20), 0);
+        // Width is 0 -> cursor position becomes offset
+        assert_eq!(calculate_scroll_offset(5, 10, 0), 5);
     }
 }

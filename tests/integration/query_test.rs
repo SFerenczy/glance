@@ -255,7 +255,7 @@ async fn test_value_display_strings() {
     assert_eq!(Value::Bool(false).to_display_string(), "false");
     assert_eq!(Value::Int(42).to_display_string(), "42");
     assert_eq!(Value::Int(-100).to_display_string(), "-100");
-    assert_eq!(Value::Float(3.14).to_display_string(), "3.14");
+    assert_eq!(Value::Float(1.414).to_display_string(), "1.414");
     assert_eq!(
         Value::String("hello".to_string()).to_display_string(),
         "hello"

@@ -131,8 +131,14 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
 
     // Position cursor in input field when focused
     if focused {
-        // Account for border (1) and prompt "> " (2)
-        let cursor_x = area.x + 1 + 2 + app.input.cursor as u16;
+        // Calculate scroll offset to match the widget's rendering
+        // Border left (1) + prompt "> " (2) + border right (1) + cursor space (1) = 5
+        let available_width = area.width.saturating_sub(5) as usize;
+        let scroll_offset =
+            input::calculate_scroll_offset(app.input.cursor, app.input.text.len(), available_width);
+
+        // Account for border (1) and prompt "> " (2), minus scroll offset
+        let cursor_x = area.x + 1 + 2 + (app.input.cursor - scroll_offset) as u16;
         let cursor_y = area.y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
     }
