@@ -7,7 +7,8 @@ use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 
 use crate::error::Result;
-use crate::llm::types::Message;
+use crate::llm::tools::ToolDefinition;
+use crate::llm::types::{LlmResponse, Message, ToolCall, ToolResult};
 use crate::llm::LlmClient;
 
 /// Mock LLM client that returns canned responses based on input patterns.
@@ -17,12 +18,20 @@ use crate::llm::LlmClient;
 pub struct MockLlmClient {
     /// Custom response mappings (pattern -> response).
     custom_responses: Vec<(String, String)>,
+    /// Whether to simulate tool calls for saved queries questions.
+    simulate_tool_calls: bool,
 }
 
 impl MockLlmClient {
     /// Creates a new mock client with default responses.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Enables tool call simulation for testing.
+    pub fn with_tool_calls(mut self) -> Self {
+        self.simulate_tool_calls = true;
+        self
     }
 
     /// Adds a custom response mapping.
@@ -118,6 +127,67 @@ impl LlmClient for MockLlmClient {
 
         let stream = stream::iter(chunks.into_iter().map(Ok));
         Ok(stream.boxed())
+    }
+
+    async fn complete_with_tools(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> Result<LlmResponse> {
+        let input = Self::extract_user_input(messages);
+        let input_lower = input.to_lowercase();
+
+        // If tool calls are enabled and the question is about saved queries, simulate a tool call
+        if self.simulate_tool_calls
+            && !tools.is_empty()
+            && (input_lower.contains("saved quer") || input_lower.contains("what queries"))
+        {
+            return Ok(LlmResponse::with_tool_calls(
+                String::new(),
+                vec![ToolCall {
+                    id: "mock_tool_call_1".to_string(),
+                    name: "list_saved_queries".to_string(),
+                    arguments: "{}".to_string(),
+                }],
+            ));
+        }
+
+        // Default: just return text response
+        let response = self.mock_response(&input);
+        Ok(LlmResponse::text(response))
+    }
+
+    async fn continue_with_tool_results(
+        &self,
+        _messages: &[Message],
+        _assistant_tool_calls: &[ToolCall],
+        tool_results: &[ToolResult],
+        _tools: &[ToolDefinition],
+    ) -> Result<LlmResponse> {
+        // Parse the tool results and generate a response
+        if let Some(result) = tool_results.first() {
+            if let Ok(queries) = serde_json::from_str::<Vec<serde_json::Value>>(&result.content) {
+                if queries.is_empty() {
+                    return Ok(LlmResponse::text(
+                        "There are no saved queries yet. You can save queries using the /savequery command.",
+                    ));
+                }
+                let mut response = String::from("Here are the saved queries:\n\n");
+                for query in &queries {
+                    if let Some(name) = query.get("name").and_then(|v| v.as_str()) {
+                        response.push_str(&format!("- **{}**", name));
+                        if let Some(desc) = query.get("description").and_then(|v| v.as_str()) {
+                            response.push_str(&format!(": {}", desc));
+                        }
+                        response.push('\n');
+                    }
+                }
+                return Ok(LlmResponse::text(response));
+            }
+        }
+        Ok(LlmResponse::text(
+            "I couldn't retrieve the saved queries information.",
+        ))
     }
 }
 

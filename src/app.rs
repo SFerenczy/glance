@@ -10,7 +10,9 @@ use crate::config::ConnectionConfig;
 use crate::db::{DatabaseClient, PostgresClient, QueryResult, Schema};
 use crate::error::{GlanceError, Result};
 use crate::llm::{
-    build_messages, parse_llm_response, Conversation, LlmClient, LlmProvider, MockLlmClient,
+    build_messages, format_saved_queries_for_llm, get_tool_definitions, parse_llm_response,
+    Conversation, ListSavedQueriesInput, LlmClient, LlmProvider, LlmResponse, MockLlmClient,
+    ToolResult,
 };
 use crate::persistence::{
     self, ConnectionProfile, HistoryFilter, QueryStatus, SavedQueryFilter, SecretStorageStatus,
@@ -350,14 +352,22 @@ impl Orchestrator {
         // Build messages for LLM
         let messages = build_messages(&self.schema, &self.conversation);
 
-        // Get LLM response
-        let response = self.llm.complete(&messages).await?;
+        // Get tool definitions
+        let tools = get_tool_definitions();
+
+        // Get LLM response with tool support
+        let mut response = self.llm.complete_with_tools(&messages, &tools).await?;
+
+        // Handle tool calls if any
+        if response.has_tool_calls() {
+            response = self.handle_tool_calls(response, &tools).await?;
+        }
 
         // Add assistant response to conversation
-        self.conversation.add_assistant(&response);
+        self.conversation.add_assistant(&response.content);
 
         // Parse the response to extract SQL
-        let parsed = parse_llm_response(&response);
+        let parsed = parse_llm_response(&response.content);
 
         let mut result_messages = Vec::new();
         let mut log_entry = None;
@@ -388,6 +398,91 @@ impl Orchestrator {
         }
 
         Ok(InputResult::Messages(result_messages, log_entry))
+    }
+
+    /// Handles tool calls from the LLM and returns the final response.
+    async fn handle_tool_calls(
+        &self,
+        response: LlmResponse,
+        tools: &[crate::llm::ToolDefinition],
+    ) -> Result<LlmResponse> {
+        let mut tool_results = Vec::new();
+
+        for tool_call in &response.tool_calls {
+            let result = self
+                .execute_tool(&tool_call.name, &tool_call.arguments)
+                .await;
+            tool_results.push(ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: result,
+            });
+        }
+
+        // Build messages (without the tool call response - that's added by the client)
+        let messages = build_messages(&self.schema, &self.conversation);
+
+        // Continue the conversation with tool results
+        self.llm
+            .continue_with_tool_results(&messages, &response.tool_calls, &tool_results, tools)
+            .await
+    }
+
+    /// Executes a tool and returns the result as JSON string.
+    async fn execute_tool(&self, name: &str, arguments: &str) -> String {
+        match name {
+            "list_saved_queries" => self.execute_list_saved_queries(arguments).await,
+            _ => serde_json::json!({
+                "error": format!("Unknown tool: {}", name)
+            })
+            .to_string(),
+        }
+    }
+
+    /// Executes the list_saved_queries tool.
+    async fn execute_list_saved_queries(&self, arguments: &str) -> String {
+        let state_db = match &self.state_db {
+            Some(db) => db,
+            None => {
+                return serde_json::json!({
+                    "error": "State database not available"
+                })
+                .to_string();
+            }
+        };
+
+        // Parse the input arguments
+        let input: ListSavedQueriesInput = match serde_json::from_str(arguments) {
+            Ok(input) => input,
+            Err(_) => ListSavedQueriesInput {
+                connection_name: None,
+                tags: None,
+                text: None,
+                limit: None,
+            },
+        };
+
+        // Build filter from input
+        let filter = SavedQueryFilter {
+            connection_name: input
+                .connection_name
+                .or_else(|| self.current_connection_name.clone()),
+            include_global: true,
+            tag: input.tags.and_then(|t| t.into_iter().next()),
+            text_search: input.text,
+            limit: input.limit,
+        };
+
+        // Query saved queries
+        match persistence::saved_queries::list_saved_queries(state_db.pool(), &filter).await {
+            Ok(queries) => {
+                let output = format_saved_queries_for_llm(&queries);
+                serde_json::to_string(&output).unwrap_or_else(|_| "[]".to_string())
+            }
+            Err(e) => serde_json::json!({
+                "error": format!("Failed to list saved queries: {}", e)
+            })
+            .to_string(),
+        }
     }
 
     /// Handles SQL execution with safety classification.

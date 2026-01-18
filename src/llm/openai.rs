@@ -11,7 +11,8 @@ use std::time::Duration;
 use tracing::{debug, warn};
 
 use crate::error::{GlanceError, Result};
-use crate::llm::types::Message;
+use crate::llm::tools::ToolDefinition;
+use crate::llm::types::{LlmResponse, Message, ToolCall, ToolResult};
 use crate::llm::LlmClient;
 
 /// Default timeout for API requests.
@@ -91,7 +92,36 @@ impl OpenAiClient {
             .iter()
             .map(|m| OpenAiMessage {
                 role: m.role.as_str().to_string(),
-                content: m.content.clone(),
+                content: Some(m.content.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+            })
+            .collect()
+    }
+
+    /// Converts tool definitions to OpenAI API format.
+    fn convert_tools(tools: &[ToolDefinition]) -> Vec<OpenAiTool> {
+        tools
+            .iter()
+            .map(|t| OpenAiTool {
+                tool_type: "function".to_string(),
+                function: OpenAiFunction {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    parameters: t.parameters.clone(),
+                },
+            })
+            .collect()
+    }
+
+    /// Converts OpenAI tool calls to our internal format.
+    fn convert_tool_calls(tool_calls: &[OpenAiToolCall]) -> Vec<ToolCall> {
+        tool_calls
+            .iter()
+            .map(|tc| ToolCall {
+                id: tc.id.clone(),
+                name: tc.function.name.clone(),
+                arguments: tc.function.arguments.clone(),
             })
             .collect()
     }
@@ -141,10 +171,24 @@ impl OpenAiClient {
 #[async_trait]
 impl LlmClient for OpenAiClient {
     async fn complete(&self, messages: &[Message]) -> Result<String> {
+        let response = self.complete_with_tools(messages, &[]).await?;
+        Ok(response.content)
+    }
+
+    async fn complete_with_tools(
+        &self,
+        messages: &[Message],
+        tools: &[ToolDefinition],
+    ) -> Result<LlmResponse> {
         let request = OpenAiRequest {
             model: self.config.model.clone(),
             messages: Self::convert_messages(messages),
             stream: false,
+            tools: if tools.is_empty() {
+                None
+            } else {
+                Some(Self::convert_tools(tools))
+            },
         };
 
         let mut last_error = None;
@@ -179,12 +223,20 @@ impl LlmClient for OpenAiClient {
                                 GlanceError::llm(format!("Failed to parse response: {}", e))
                             })?;
 
-                        return response
+                        let choice = response
                             .choices
                             .into_iter()
                             .next()
-                            .map(|c| c.message.content)
-                            .ok_or_else(|| GlanceError::llm("No response from OpenAI"));
+                            .ok_or_else(|| GlanceError::llm("No response from OpenAI"))?;
+
+                        let content = choice.message.content.unwrap_or_default();
+                        let tool_calls = choice
+                            .message
+                            .tool_calls
+                            .map(|tcs| Self::convert_tool_calls(&tcs))
+                            .unwrap_or_default();
+
+                        return Ok(LlmResponse::with_tool_calls(content, tool_calls));
                     }
 
                     let (error, is_retryable) = Self::parse_error(status, &body);
@@ -228,6 +280,98 @@ impl LlmClient for OpenAiClient {
         Err(last_error.expect("at least one attempt was made"))
     }
 
+    async fn continue_with_tool_results(
+        &self,
+        messages: &[Message],
+        assistant_tool_calls: &[ToolCall],
+        tool_results: &[ToolResult],
+        tools: &[ToolDefinition],
+    ) -> Result<LlmResponse> {
+        let mut api_messages = Self::convert_messages(messages);
+
+        // Add the assistant message with tool_calls (required by OpenAI)
+        if !assistant_tool_calls.is_empty() {
+            api_messages.push(OpenAiMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_calls: Some(
+                    assistant_tool_calls
+                        .iter()
+                        .map(|tc| OpenAiToolCall {
+                            id: tc.id.clone(),
+                            call_type: "function".to_string(),
+                            function: OpenAiToolCallFunction {
+                                name: tc.name.clone(),
+                                arguments: tc.arguments.clone(),
+                            },
+                        })
+                        .collect(),
+                ),
+                tool_call_id: None,
+            });
+        }
+
+        // Add tool result messages
+        for result in tool_results {
+            api_messages.push(OpenAiMessage {
+                role: "tool".to_string(),
+                content: Some(result.content.clone()),
+                tool_calls: None,
+                tool_call_id: Some(result.tool_call_id.clone()),
+            });
+        }
+
+        let request = OpenAiRequest {
+            model: self.config.model.clone(),
+            messages: api_messages,
+            stream: false,
+            tools: if tools.is_empty() {
+                None
+            } else {
+                Some(Self::convert_tools(tools))
+            },
+        };
+
+        let response = self
+            .client
+            .post(OPENAI_API_URL)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| GlanceError::llm(format!("Request failed: {}", e)))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| GlanceError::llm(format!("Failed to read response: {}", e)))?;
+
+        if !status.is_success() {
+            let (error, _) = Self::parse_error(status, &body);
+            return Err(error);
+        }
+
+        let response: OpenAiResponse = serde_json::from_str(&body)
+            .map_err(|e| GlanceError::llm(format!("Failed to parse response: {}", e)))?;
+
+        let choice = response
+            .choices
+            .into_iter()
+            .next()
+            .ok_or_else(|| GlanceError::llm("No response from OpenAI"))?;
+
+        let content = choice.message.content.unwrap_or_default();
+        let tool_calls = choice
+            .message
+            .tool_calls
+            .map(|tcs| Self::convert_tool_calls(&tcs))
+            .unwrap_or_default();
+
+        Ok(LlmResponse::with_tool_calls(content, tool_calls))
+    }
+
     async fn complete_stream(
         &self,
         messages: &[Message],
@@ -236,6 +380,7 @@ impl LlmClient for OpenAiClient {
             model: self.config.model.clone(),
             messages: Self::convert_messages(messages),
             stream: true,
+            tools: None,
         };
 
         let response = self
@@ -331,12 +476,47 @@ struct OpenAiRequest {
     model: String,
     messages: Vec<OpenAiMessage>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<OpenAiTool>>,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiTool {
+    #[serde(rename = "type")]
+    tool_type: String,
+    function: OpenAiFunction,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiFunction {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct OpenAiMessage {
     role: String,
-    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OpenAiToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OpenAiToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    call_type: String,
+    function: OpenAiToolCallFunction,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OpenAiToolCallFunction {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Debug, Deserialize)]

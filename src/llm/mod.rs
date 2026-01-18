@@ -24,7 +24,7 @@ pub use tools::{
     format_saved_queries_for_llm, get_tool_definitions, ListSavedQueriesInput, SavedQueryOutput,
     ToolDefinition,
 };
-pub use types::{Conversation, Message, Role};
+pub use types::{Conversation, LlmResponse, Message, Role, ToolCall, ToolResult};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -49,6 +49,37 @@ pub trait LlmClient: Send + Sync {
         &self,
         messages: &[Message],
     ) -> Result<BoxStream<'static, Result<String>>>;
+
+    /// Generates a completion with tool support.
+    ///
+    /// Returns an LlmResponse that may contain tool calls.
+    /// Default implementation wraps `complete()` for backwards compatibility.
+    async fn complete_with_tools(
+        &self,
+        messages: &[Message],
+        _tools: &[ToolDefinition],
+    ) -> Result<LlmResponse> {
+        let content = self.complete(messages).await?;
+        Ok(LlmResponse::text(content))
+    }
+
+    /// Continues a conversation after tool results are provided.
+    ///
+    /// The `assistant_tool_calls` parameter contains the original tool calls from the
+    /// assistant's response, which some providers (like OpenAI) require to be included
+    /// in the message history before the tool results.
+    ///
+    /// Default implementation just calls complete() with the messages.
+    async fn continue_with_tool_results(
+        &self,
+        messages: &[Message],
+        _assistant_tool_calls: &[ToolCall],
+        _tool_results: &[ToolResult],
+        _tools: &[ToolDefinition],
+    ) -> Result<LlmResponse> {
+        let content = self.complete(messages).await?;
+        Ok(LlmResponse::text(content))
+    }
 }
 
 /// LLM provider type.

@@ -4,6 +4,58 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A tool call requested by the LLM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    /// Unique ID for this tool call (used to match results).
+    pub id: String,
+    /// Name of the tool to call.
+    pub name: String,
+    /// JSON arguments for the tool.
+    pub arguments: String,
+}
+
+/// Result of a tool execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResult {
+    /// ID of the tool call this result is for.
+    pub tool_call_id: String,
+    /// The result content (typically JSON).
+    pub content: String,
+}
+
+/// Response from an LLM that may include tool calls.
+#[derive(Debug, Clone)]
+pub struct LlmResponse {
+    /// Text content from the LLM (may be empty if only tool calls).
+    pub content: String,
+    /// Tool calls requested by the LLM.
+    pub tool_calls: Vec<ToolCall>,
+}
+
+impl LlmResponse {
+    /// Creates a response with only text content.
+    pub fn text(content: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+            tool_calls: Vec::new(),
+        }
+    }
+
+    /// Creates a response with tool calls.
+    pub fn with_tool_calls(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
+        Self {
+            content: content.into(),
+            tool_calls,
+        }
+    }
+
+    /// Returns true if this response contains tool calls.
+    pub fn has_tool_calls(&self) -> bool {
+        !self.tool_calls.is_empty()
+    }
+}
+
 /// Role of a message in a conversation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
