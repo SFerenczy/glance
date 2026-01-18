@@ -57,6 +57,66 @@ This document defines the development principles and rules for AI agents working
 
 ---
 
+## Behavior-Driven Development (BDD)
+
+We follow a BDD approach for feature development. This means:
+
+### Workflow
+
+1. **Specify behavior first**: Write Gherkin scenarios before implementation
+2. **Scenarios as acceptance criteria**: Each feature has executable specifications
+3. **Implement to pass scenarios**: Code is written to make scenarios pass
+4. **Scenarios are living documentation**: Keep them updated as behavior evolves
+
+### Gherkin Format
+
+Use standard Gherkin syntax for feature specifications:
+
+```gherkin
+Feature: Feature name
+  As a <role>
+  I want <capability>
+  So that <benefit>
+
+  Scenario: Specific behavior
+    Given <precondition>
+    When <action>
+    Then <expected outcome>
+    And <additional outcome>
+```
+
+### Best Practices
+
+- **One behavior per scenario**: Keep scenarios focused and atomic
+- **Declarative over imperative**: Describe _what_, not _how_
+- **Use domain language**: Scenarios should be readable by non-developers
+- **Avoid implementation details**: Scenarios describe behavior, not code
+- **Group related scenarios**: Use Feature blocks to organize related behaviors
+
+### Where to Write Scenarios
+
+- **Implementation plans**: Include scenarios in `plan.md` for upcoming features
+- **Spec documents**: Include scenarios in `docs/specs/` for feature specifications
+- **Test files**: Translate scenarios into Rust tests in `/tests` directory
+
+### Example
+
+```gherkin
+Feature: Query execution
+  As a database user
+  I want to run SQL queries through natural language
+  So that I can explore data without writing SQL
+
+  Scenario: Simple table query
+    Given a connected database with a "users" table
+    When I type "show me all users"
+    And I press Enter
+    Then I should see a table with user data
+    And the query log should contain the executed SQL
+```
+
+---
+
 ## Git & Workflow
 
 - Atomic commits with clear messages.
