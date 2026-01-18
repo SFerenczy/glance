@@ -70,6 +70,13 @@ pub struct ConnectionConfig {
 
     /// Database password (not recommended to store in config).
     pub password: Option<String>,
+
+    /// SSL mode for the connection (disable, allow, prefer, require, verify-ca, verify-full).
+    pub sslmode: Option<String>,
+
+    /// Extra connection parameters as key-value pairs.
+    #[serde(default)]
+    pub extras: Option<serde_json::Value>,
 }
 
 fn default_port() -> u16 {
@@ -108,6 +115,8 @@ impl ConnectionConfig {
             database,
             user,
             password,
+            sslmode: None,
+            extras: None,
         })
     }
 
@@ -156,6 +165,12 @@ impl ConnectionConfig {
         if other.password.is_some() {
             self.password = other.password.clone();
         }
+        if other.sslmode.is_some() {
+            self.sslmode = other.sslmode.clone();
+        }
+        if other.extras.is_some() {
+            self.extras = other.extras.clone();
+        }
     }
 
     /// Applies environment variables (PGHOST, PGPORT, etc.) as defaults.
@@ -178,6 +193,9 @@ impl ConnectionConfig {
         }
         if self.password.is_none() {
             self.password = std::env::var("PGPASSWORD").ok();
+        }
+        if self.sslmode.is_none() {
+            self.sslmode = std::env::var("PGSSLMODE").ok();
         }
     }
 
