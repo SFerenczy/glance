@@ -26,6 +26,10 @@ pub enum GlanceError {
     /// Internal application errors (unexpected states, bugs, etc.)
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// Persistence layer errors (SQLite, keyring, etc.)
+    #[error("Persistence error: {0}")]
+    Persistence(String),
 }
 
 impl GlanceError {
@@ -54,6 +58,11 @@ impl GlanceError {
         Self::Internal(msg.into())
     }
 
+    /// Creates a persistence error with the given message.
+    pub fn persistence(msg: impl Into<String>) -> Self {
+        Self::Persistence(msg.into())
+    }
+
     /// Returns the error category as a string for display purposes.
     pub fn category(&self) -> &'static str {
         match self {
@@ -62,6 +71,7 @@ impl GlanceError {
             Self::Llm(_) => "LLM Error",
             Self::Config(_) => "Configuration Error",
             Self::Internal(_) => "Internal Error",
+            Self::Persistence(_) => "Persistence Error",
         }
     }
 }
