@@ -86,11 +86,7 @@ pub fn format_saved_queries_for_llm(
             sql: q.sql.clone(),
             description: q.description.clone(),
             tags: q.tags.clone(),
-            connection_label: q
-                .connection_name
-                .as_deref()
-                .unwrap_or("global")
-                .to_string(),
+            connection_label: q.connection_name.as_deref().unwrap_or("global").to_string(),
             last_used_at: q.last_used_at.clone(),
             usage_count: q.usage_count,
         })

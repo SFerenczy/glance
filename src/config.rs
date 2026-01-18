@@ -209,10 +209,7 @@ impl ConnectionConfig {
     /// Returns a redacted display string safe for LLM context.
     /// Only includes database name, no host/user/password.
     pub fn redacted_for_llm(&self) -> String {
-        self.database
-            .as_deref()
-            .unwrap_or("unknown")
-            .to_string()
+        self.database.as_deref().unwrap_or("unknown").to_string()
     }
 
     /// Returns a display string with redacted host for UI.
@@ -359,6 +356,8 @@ database = "mydb"
             database: Some("mydb".to_string()),
             user: Some("user".to_string()),
             password: Some("pass".to_string()),
+            sslmode: None,
+            extras: None,
         };
 
         let conn_str = conn.to_connection_string().unwrap();
@@ -373,6 +372,8 @@ database = "mydb"
             database: Some("mydb".to_string()),
             user: None,
             password: None,
+            sslmode: None,
+            extras: None,
         };
 
         let conn_str = conn.to_connection_string().unwrap();
@@ -387,6 +388,8 @@ database = "mydb"
             database: Some("mydb".to_string()),
             user: Some("user".to_string()),
             password: None,
+            sslmode: None,
+            extras: None,
         };
 
         let override_config = ConnectionConfig {
@@ -395,6 +398,8 @@ database = "mydb"
             database: None,
             user: None,
             password: Some("secret".to_string()),
+            sslmode: None,
+            extras: None,
         };
 
         base.merge(&override_config);
@@ -413,6 +418,8 @@ database = "mydb"
             database: Some("mydb".to_string()),
             user: None,
             password: None,
+            sslmode: None,
+            extras: None,
         };
 
         assert_eq!(conn.display_string(), "mydb @ localhost:5432");

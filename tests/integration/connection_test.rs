@@ -36,6 +36,8 @@ async fn test_connect_with_invalid_host() {
         database: Some("testdb".to_string()),
         user: Some("testuser".to_string()),
         password: Some("testpass".to_string()),
+        sslmode: None,
+        extras: None,
     };
 
     let result = PostgresClient::connect(&config).await;
@@ -62,6 +64,8 @@ async fn test_connect_with_invalid_port() {
         database: Some("testdb".to_string()),
         user: Some("testuser".to_string()),
         password: Some("testpass".to_string()),
+        sslmode: None,
+        extras: None,
     };
 
     let result = PostgresClient::connect(&config).await;
@@ -101,6 +105,8 @@ async fn test_connection_roundtrip() {
         database: Some("mydb".to_string()),
         user: Some("testuser".to_string()),
         password: Some("testpass".to_string()),
+        sslmode: None,
+        extras: None,
     };
 
     let conn_str = original.to_connection_string().unwrap();

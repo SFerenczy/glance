@@ -2,6 +2,8 @@
 //!
 //! CRUD operations for user-curated SQL queries with tagging support.
 
+#![allow(dead_code)]
+
 use crate::error::{GlanceError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePool;
@@ -96,14 +98,12 @@ pub async fn create_saved_query(
 
 /// Adds a tag to a saved query.
 async fn add_tag(pool: &SqlitePool, saved_query_id: i64, tag: &str) -> Result<()> {
-    sqlx::query(
-        "INSERT OR IGNORE INTO saved_query_tags (saved_query_id, tag) VALUES (?, ?)",
-    )
-    .bind(saved_query_id)
-    .bind(tag)
-    .execute(pool)
-    .await
-    .map_err(|e| GlanceError::persistence(format!("Failed to add tag: {e}")))?;
+    sqlx::query("INSERT OR IGNORE INTO saved_query_tags (saved_query_id, tag) VALUES (?, ?)")
+        .bind(saved_query_id)
+        .bind(tag)
+        .execute(pool)
+        .await
+        .map_err(|e| GlanceError::persistence(format!("Failed to add tag: {e}")))?;
 
     Ok(())
 }
@@ -230,9 +230,8 @@ pub async fn list_saved_queries(
     }
 
     if let Some(ref tag) = filter.tag {
-        conditions.push(
-            "id IN (SELECT saved_query_id FROM saved_query_tags WHERE tag = ?)".to_string(),
-        );
+        conditions
+            .push("id IN (SELECT saved_query_id FROM saved_query_tags WHERE tag = ?)".to_string());
         bindings.push(tag.clone());
     }
 
@@ -299,14 +298,12 @@ pub async fn update_saved_query(
     tags: Option<&[String]>,
 ) -> Result<()> {
     if let Some(new_sql) = sql {
-        sqlx::query(
-            "UPDATE saved_queries SET sql = ?, updated_at = datetime('now') WHERE id = ?",
-        )
-        .bind(new_sql)
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(|e| GlanceError::persistence(format!("Failed to update saved query: {e}")))?;
+        sqlx::query("UPDATE saved_queries SET sql = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(new_sql)
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(|e| GlanceError::persistence(format!("Failed to update saved query: {e}")))?;
     }
 
     if let Some(new_desc) = description {
@@ -457,16 +454,9 @@ mod tests {
     async fn test_get_by_name() {
         let pool = test_pool().await;
 
-        create_saved_query(
-            &pool,
-            "my_query",
-            "SELECT 1",
-            None,
-            Some("test"),
-            &[],
-        )
-        .await
-        .unwrap();
+        create_saved_query(&pool, "my_query", "SELECT 1", None, Some("test"), &[])
+            .await
+            .unwrap();
 
         let query = get_saved_query_by_name(&pool, "my_query", Some("test"))
             .await
@@ -479,12 +469,26 @@ mod tests {
     async fn test_list_with_tag_filter() {
         let pool = test_pool().await;
 
-        create_saved_query(&pool, "q1", "SELECT 1", None, Some("test"), &["tag1".to_string()])
-            .await
-            .unwrap();
-        create_saved_query(&pool, "q2", "SELECT 2", None, Some("test"), &["tag2".to_string()])
-            .await
-            .unwrap();
+        create_saved_query(
+            &pool,
+            "q1",
+            "SELECT 1",
+            None,
+            Some("test"),
+            &["tag1".to_string()],
+        )
+        .await
+        .unwrap();
+        create_saved_query(
+            &pool,
+            "q2",
+            "SELECT 2",
+            None,
+            Some("test"),
+            &["tag2".to_string()],
+        )
+        .await
+        .unwrap();
 
         let filter = SavedQueryFilter {
             tag: Some("tag1".to_string()),

@@ -648,6 +648,8 @@ mod tests {
             database: Some("testdb".to_string()),
             user: Some("testuser".to_string()),
             password: Some("testpass".to_string()),
+            sslmode: None,
+            extras: None,
         };
 
         let result = PostgresClient::connect(&config).await;

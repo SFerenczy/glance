@@ -37,7 +37,9 @@ async fn ensure_schema_versions_table(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await
-    .map_err(|e| GlanceError::persistence(format!("Failed to create schema_versions table: {e}")))?;
+    .map_err(|e| {
+        GlanceError::persistence(format!("Failed to create schema_versions table: {e}"))
+    })?;
 
     Ok(())
 }
@@ -49,7 +51,7 @@ async fn get_current_version(pool: &SqlitePool) -> Result<i32> {
         .await
         .map_err(|e| GlanceError::persistence(format!("Failed to get schema version: {e}")))?;
 
-    Ok(row.and_then(|(v,)| Some(v)).unwrap_or(0))
+    Ok(row.map(|(v,)| v).unwrap_or(0))
 }
 
 /// Runs migrations from the current version to the target version.
@@ -191,7 +193,9 @@ async fn migration_v1(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await
-    .map_err(|e| GlanceError::persistence(format!("Failed to create saved_query_tags table: {e}")))?;
+    .map_err(|e| {
+        GlanceError::persistence(format!("Failed to create saved_query_tags table: {e}"))
+    })?;
 
     sqlx::query(
         r#"
@@ -270,12 +274,11 @@ mod tests {
         let pool = test_pool().await;
         run_migrations(&pool).await.unwrap();
 
-        let tables: Vec<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+        let tables: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
 
         let table_names: Vec<&str> = tables.iter().map(|(n,)| n.as_str()).collect();
         assert!(table_names.contains(&"connections"));

@@ -3,17 +3,21 @@
 //! Manages local SQLite storage for connections, query history, saved queries,
 //! and LLM settings. Secrets are stored via OS keyring when available.
 
-mod connections;
-mod history;
-mod llm_settings;
+pub mod connections;
+pub mod history;
+pub mod llm_settings;
 mod migrations;
-mod saved_queries;
+pub mod saved_queries;
 mod secrets;
 
-pub use connections::{ConnectionProfile, ConnectionProfileRow};
-pub use history::{HistoryEntry, HistoryFilter, SubmittedBy, QueryStatus};
+#[allow(unused_imports)]
+pub use connections::{ConnectionProfile, PasswordStorage};
+#[allow(unused_imports)]
+pub use history::{HistoryEntry, HistoryFilter, QueryStatus, SubmittedBy};
+#[allow(unused_imports)]
 pub use llm_settings::LlmSettings;
-pub use saved_queries::{SavedQuery, SavedQueryFilter, SavedQueryTag};
+#[allow(unused_imports)]
+pub use saved_queries::{SavedQuery, SavedQueryFilter};
 pub use secrets::{SecretStorage, SecretStorageStatus};
 
 use crate::error::{GlanceError, Result};
@@ -27,12 +31,15 @@ const MAX_RETRY_ATTEMPTS: u32 = 3;
 const RETRY_DELAY_MS: u64 = 100;
 
 /// Main persistence interface for the application state database.
+#[derive(Debug)]
+#[allow(dead_code)]
 pub struct StateDb {
     pool: SqlitePool,
     db_path: PathBuf,
     secret_storage: SecretStorage,
 }
 
+#[allow(dead_code)]
 impl StateDb {
     /// Opens or creates the state database at the default platform path.
     ///
@@ -60,22 +67,18 @@ impl StateDb {
 
     /// Returns the default state database path for the current platform.
     pub fn default_path() -> Result<PathBuf> {
-        let config_dir = dirs::config_dir().ok_or_else(|| {
-            GlanceError::persistence("Could not determine config directory")
-        })?;
+        let config_dir = dirs::config_dir()
+            .ok_or_else(|| GlanceError::persistence("Could not determine config directory"))?;
         Ok(config_dir.join("db-glance").join("state.db"))
     }
 
     /// Attempts to open the database with retries for lock contention.
-    async fn try_open(path: &PathBuf, secret_storage: &SecretStorage) -> Result<Self> {
+    async fn try_open(path: &std::path::Path, secret_storage: &SecretStorage) -> Result<Self> {
         let mut last_error = None;
 
         for attempt in 0..MAX_RETRY_ATTEMPTS {
             if attempt > 0 {
-                tokio::time::sleep(Duration::from_millis(
-                    RETRY_DELAY_MS * 2u64.pow(attempt),
-                ))
-                .await;
+                tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS * 2u64.pow(attempt))).await;
             }
 
             match Self::connect(path).await {
@@ -84,7 +87,7 @@ impl StateDb {
                     info!("State database opened at {}", path.display());
                     return Ok(Self {
                         pool,
-                        db_path: path.clone(),
+                        db_path: path.to_path_buf(),
                         secret_storage: secret_storage.clone(),
                     });
                 }
@@ -94,13 +97,12 @@ impl StateDb {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| {
-            GlanceError::persistence("Failed to open database after retries")
-        }))
+        Err(last_error
+            .unwrap_or_else(|| GlanceError::persistence("Failed to open database after retries")))
     }
 
     /// Creates a connection pool to the SQLite database.
-    async fn connect(path: &PathBuf) -> Result<SqlitePool> {
+    async fn connect(path: &std::path::Path) -> Result<SqlitePool> {
         let conn_str = format!("sqlite:{}?mode=rwc", path.display());
         let options = SqliteConnectOptions::from_str(&conn_str)
             .map_err(|e| GlanceError::persistence(format!("Invalid database path: {e}")))?
@@ -113,11 +115,13 @@ impl StateDb {
             .acquire_timeout(Duration::from_secs(10))
             .connect_with(options)
             .await
-            .map_err(|e| GlanceError::persistence(format!("Failed to connect to state database: {e}")))
+            .map_err(|e| {
+                GlanceError::persistence(format!("Failed to connect to state database: {e}"))
+            })
     }
 
     /// Ensures parent directories exist for the database path.
-    fn ensure_parent_dirs(path: &PathBuf) -> Result<()> {
+    fn ensure_parent_dirs(path: &std::path::Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 GlanceError::persistence(format!(
@@ -140,16 +144,11 @@ impl StateDb {
                     backup_path.display()
                 ))
             })?;
-            warn!(
-                "Backed up corrupted database to {}",
-                backup_path.display()
-            );
+            warn!("Backed up corrupted database to {}", backup_path.display());
         }
 
         Self::try_open(path, secret_storage).await.map_err(|e| {
-            GlanceError::persistence(format!(
-                "Failed to recreate database after backup: {e}"
-            ))
+            GlanceError::persistence(format!("Failed to recreate database after backup: {e}"))
         })
     }
 

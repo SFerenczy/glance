@@ -6,6 +6,7 @@ mod config;
 mod db;
 mod error;
 mod llm;
+mod persistence;
 mod safety;
 mod tui;
 

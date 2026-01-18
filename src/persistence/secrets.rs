@@ -25,6 +25,7 @@ pub enum SecretStorageStatus {
 
 /// Manages secure storage of secrets (passwords, API keys).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SecretStorage {
     keyring_available: bool,
     plaintext_consented: Arc<AtomicBool>,
@@ -36,6 +37,7 @@ impl Default for SecretStorage {
     }
 }
 
+#[allow(dead_code)]
 impl SecretStorage {
     /// Creates a new secret storage instance, probing keyring availability.
     pub fn new() -> Self {
@@ -93,8 +95,9 @@ impl SecretStorage {
             ));
         }
 
-        let entry = Entry::new(SERVICE_NAME, key)
-            .map_err(|e| GlanceError::persistence(format!("Failed to create keyring entry: {e}")))?;
+        let entry = Entry::new(SERVICE_NAME, key).map_err(|e| {
+            GlanceError::persistence(format!("Failed to create keyring entry: {e}"))
+        })?;
 
         entry
             .set_password(secret)
@@ -179,10 +182,7 @@ mod tests {
 
     #[test]
     fn test_connection_password_key() {
-        assert_eq!(
-            SecretStorage::connection_password_key("mydb"),
-            "conn:mydb"
-        );
+        assert_eq!(SecretStorage::connection_password_key("mydb"), "conn:mydb");
     }
 
     #[test]

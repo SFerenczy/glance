@@ -2,6 +2,8 @@
 //!
 //! Stores LLM provider, model, and API key configuration.
 
+#![allow(dead_code)]
+
 use crate::error::{GlanceError, Result};
 use crate::persistence::secrets::SecretStorage;
 use serde::{Deserialize, Serialize};
@@ -40,6 +42,7 @@ impl ApiKeyStorage {
 
 /// Raw database row for LLM settings.
 #[derive(Debug, Clone, FromRow)]
+#[allow(dead_code)]
 struct LlmSettingsRow {
     provider: String,
     model: String,
@@ -98,13 +101,11 @@ pub async fn set_provider(pool: &SqlitePool, provider: &str) -> Result<()> {
         )));
     }
 
-    sqlx::query(
-        "UPDATE llm_settings SET provider = ?, updated_at = datetime('now') WHERE id = 1",
-    )
-    .bind(provider)
-    .execute(pool)
-    .await
-    .map_err(|e| GlanceError::persistence(format!("Failed to update provider: {e}")))?;
+    sqlx::query("UPDATE llm_settings SET provider = ?, updated_at = datetime('now') WHERE id = 1")
+        .bind(provider)
+        .execute(pool)
+        .await
+        .map_err(|e| GlanceError::persistence(format!("Failed to update provider: {e}")))?;
 
     Ok(())
 }
@@ -161,12 +162,11 @@ pub async fn get_api_key(
     provider: &str,
     secrets: &SecretStorage,
 ) -> Result<Option<String>> {
-    let row: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT api_key_storage, api_key_plaintext FROM llm_settings WHERE id = 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| GlanceError::persistence(format!("Failed to get API key: {e}")))?;
+    let row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT api_key_storage, api_key_plaintext FROM llm_settings WHERE id = 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| GlanceError::persistence(format!("Failed to get API key: {e}")))?;
 
     match row {
         Some((storage, plaintext)) => {
@@ -185,7 +185,11 @@ pub async fn get_api_key(
 }
 
 /// Clears the stored API key.
-pub async fn clear_api_key(pool: &SqlitePool, provider: &str, secrets: &SecretStorage) -> Result<()> {
+pub async fn clear_api_key(
+    pool: &SqlitePool,
+    provider: &str,
+    secrets: &SecretStorage,
+) -> Result<()> {
     let key = SecretStorage::llm_api_key(provider);
     secrets.delete(&key)?;
 
@@ -205,12 +209,11 @@ pub async fn clear_api_key(pool: &SqlitePool, provider: &str, secrets: &SecretSt
 
 /// Returns whether an API key is configured.
 pub async fn has_api_key(pool: &SqlitePool) -> Result<bool> {
-    let (storage,): (String,) = sqlx::query_as(
-        "SELECT api_key_storage FROM llm_settings WHERE id = 1",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| GlanceError::persistence(format!("Failed to check API key: {e}")))?;
+    let (storage,): (String,) =
+        sqlx::query_as("SELECT api_key_storage FROM llm_settings WHERE id = 1")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| GlanceError::persistence(format!("Failed to check API key: {e}")))?;
 
     Ok(storage != "none")
 }

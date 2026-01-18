@@ -68,6 +68,8 @@ impl Cli {
                 database: self.database.clone(),
                 user: self.user.clone(),
                 password: None, // Password handled separately via prompt
+                sslmode: None,
+                extras: None,
             }));
         }
 

@@ -1,6 +1,8 @@
 //! Query history persistence.
 //!
-//! Records and retrieves executed queries with retention management.
+//! Records executed queries with metadata for history browsing and retention.
+
+#![allow(dead_code)]
 
 use crate::error::{GlanceError, Result};
 use serde::{Deserialize, Serialize};
@@ -117,7 +119,20 @@ pub struct HistoryFilter {
     pub limit: Option<i64>,
 }
 
+/// Parameters for recording a query execution.
+pub struct RecordQueryParams<'a> {
+    pub connection_name: &'a str,
+    pub submitted_by: SubmittedBy,
+    pub sql: &'a str,
+    pub status: QueryStatus,
+    pub execution_time_ms: Option<i64>,
+    pub row_count: Option<i64>,
+    pub error_message: Option<&'a str>,
+    pub saved_query_id: Option<i64>,
+}
+
 /// Records a new query execution in history.
+#[allow(clippy::too_many_arguments)]
 pub async fn record_query(
     pool: &SqlitePool,
     connection_name: &str,
@@ -327,7 +342,9 @@ mod tests {
 
         assert!(id > 0);
 
-        let entries = list_history(&pool, &HistoryFilter::default()).await.unwrap();
+        let entries = list_history(&pool, &HistoryFilter::default())
+            .await
+            .unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].sql, "SELECT 1");
         assert_eq!(entries[0].submitted_by, SubmittedBy::User);
@@ -343,12 +360,32 @@ mod tests {
             .await
             .unwrap();
 
-        record_query(&pool, "test", SubmittedBy::User, "SELECT 1", QueryStatus::Success, None, None, None, None)
-            .await
-            .unwrap();
-        record_query(&pool, "other", SubmittedBy::User, "SELECT 2", QueryStatus::Success, None, None, None, None)
-            .await
-            .unwrap();
+        record_query(
+            &pool,
+            "test",
+            SubmittedBy::User,
+            "SELECT 1",
+            QueryStatus::Success,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        record_query(
+            &pool,
+            "other",
+            SubmittedBy::User,
+            "SELECT 2",
+            QueryStatus::Success,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let filter = HistoryFilter {
             connection_name: Some("test".to_string()),
@@ -364,12 +401,32 @@ mod tests {
     async fn test_filter_by_text() {
         let pool = test_pool().await;
 
-        record_query(&pool, "test", SubmittedBy::User, "SELECT * FROM users", QueryStatus::Success, None, None, None, None)
-            .await
-            .unwrap();
-        record_query(&pool, "test", SubmittedBy::User, "SELECT * FROM orders", QueryStatus::Success, None, None, None, None)
-            .await
-            .unwrap();
+        record_query(
+            &pool,
+            "test",
+            SubmittedBy::User,
+            "SELECT * FROM users",
+            QueryStatus::Success,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        record_query(
+            &pool,
+            "test",
+            SubmittedBy::User,
+            "SELECT * FROM orders",
+            QueryStatus::Success,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let filter = HistoryFilter {
             text_search: Some("users".to_string()),
@@ -385,12 +442,32 @@ mod tests {
     async fn test_clear_history() {
         let pool = test_pool().await;
 
-        record_query(&pool, "test", SubmittedBy::User, "SELECT 1", QueryStatus::Success, None, None, None, None)
-            .await
-            .unwrap();
-        record_query(&pool, "test", SubmittedBy::User, "SELECT 2", QueryStatus::Success, None, None, None, None)
-            .await
-            .unwrap();
+        record_query(
+            &pool,
+            "test",
+            SubmittedBy::User,
+            "SELECT 1",
+            QueryStatus::Success,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        record_query(
+            &pool,
+            "test",
+            SubmittedBy::User,
+            "SELECT 2",
+            QueryStatus::Success,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let deleted = clear_history(&pool).await.unwrap();
         assert_eq!(deleted, 2);

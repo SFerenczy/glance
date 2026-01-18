@@ -13,8 +13,8 @@ use crate::llm::{
     build_messages, parse_llm_response, Conversation, LlmClient, LlmProvider, MockLlmClient,
 };
 use crate::persistence::{
-    self, ConnectionProfile, HistoryEntry, HistoryFilter, QueryStatus, SavedQuery,
-    SavedQueryFilter, SecretStorageStatus, StateDb, SubmittedBy,
+    self, ConnectionProfile, HistoryFilter, QueryStatus, SavedQueryFilter, SecretStorageStatus,
+    StateDb, SubmittedBy,
 };
 use crate::safety::{classify_sql, ClassificationResult, SafetyLevel};
 use crate::tui::app::{ChatMessage, QueryLogEntry};
@@ -316,7 +316,10 @@ impl Orchestrator {
     }
 
     /// Executes a SQL query and returns formatted messages with a log entry.
-    pub async fn execute_and_format(&mut self, sql: &str) -> (Vec<ChatMessage>, Option<QueryLogEntry>) {
+    pub async fn execute_and_format(
+        &mut self,
+        sql: &str,
+    ) -> (Vec<ChatMessage>, Option<QueryLogEntry>) {
         match self.execute_query(sql).await {
             Ok((result, entry)) => {
                 let messages = vec![
@@ -325,15 +328,13 @@ impl Orchestrator {
                 ];
                 (messages, Some(entry))
             }
-            Err(e) => {
-                (
-                    vec![ChatMessage::Error(format!(
-                        "Error executing query:\n  {}",
-                        e
-                    ))],
-                    None,
-                )
-            }
+            Err(e) => (
+                vec![ChatMessage::Error(format!(
+                    "Error executing query:\n  {}",
+                    e
+                ))],
+                None,
+            ),
         }
     }
 
@@ -398,11 +399,13 @@ impl Orchestrator {
     }
 
     /// Returns the current connection name.
+    #[allow(dead_code)]
     pub fn current_connection(&self) -> Option<&str> {
         self.current_connection_name.as_deref()
     }
 
     /// Returns the secret storage status.
+    #[allow(dead_code)]
     pub fn secret_storage_status(&self) -> Option<SecretStorageStatus> {
         self.state_db.as_ref().map(|db| db.secret_storage_status())
     }
@@ -413,7 +416,9 @@ impl Orchestrator {
             Some(db) => db,
             None => {
                 return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error("State database not available.".to_string())],
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
                     None,
                 ));
             }
@@ -432,10 +437,7 @@ impl Orchestrator {
 
         let mut output = String::from("Saved connections:\n");
         for conn in &connections {
-            let last_used = conn
-                .last_used_at
-                .as_deref()
-                .unwrap_or("never");
+            let last_used = conn.last_used_at.as_deref().unwrap_or("never");
             output.push_str(&format!(
                 "  • {} - {} @ {}:{} (last used: {})\n",
                 conn.name,
@@ -465,7 +467,9 @@ impl Orchestrator {
             Some(db) => Arc::clone(db),
             None => {
                 return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error("State database not available.".to_string())],
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
                     None,
                 ));
             }
@@ -476,7 +480,10 @@ impl Orchestrator {
             Some(p) => p,
             None => {
                 return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error(format!("Connection '{}' not found.", args))],
+                    vec![ChatMessage::Error(format!(
+                        "Connection '{}' not found.",
+                        args
+                    ))],
                     None,
                 ));
             }
@@ -526,8 +533,7 @@ impl Orchestrator {
         Ok(InputResult::Messages(
             vec![ChatMessage::System(format!(
                 "Connected to {} ({})",
-                args,
-                profile.database
+                args, profile.database
             ))],
             None,
         ))
@@ -586,7 +592,9 @@ impl Orchestrator {
                     Some(db) => Arc::clone(db),
                     None => {
                         return Ok(InputResult::Messages(
-                            vec![ChatMessage::Error("State database not available.".to_string())],
+                            vec![ChatMessage::Error(
+                                "State database not available.".to_string(),
+                            )],
                             None,
                         ));
                     }
@@ -600,7 +608,10 @@ impl Orchestrator {
                 .await
                 {
                     Ok(()) => Ok(InputResult::Messages(
-                        vec![ChatMessage::System(format!("Connection '{}' deleted.", name))],
+                        vec![ChatMessage::System(format!(
+                            "Connection '{}' deleted.",
+                            name
+                        ))],
                         None,
                     )),
                     Err(e) => Ok(InputResult::Messages(
@@ -663,7 +674,9 @@ impl Orchestrator {
             Some(db) => Arc::clone(db),
             None => {
                 return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error("State database not available.".to_string())],
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
                     None,
                 ));
             }
@@ -747,7 +760,9 @@ impl Orchestrator {
             Some(db) => db,
             None => {
                 return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error("State database not available.".to_string())],
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
                     None,
                 ));
             }
@@ -756,7 +771,10 @@ impl Orchestrator {
         if args.trim() == "clear" {
             let count = persistence::history::clear_history(state_db.pool()).await?;
             return Ok(InputResult::Messages(
-                vec![ChatMessage::System(format!("Cleared {} history entries.", count))],
+                vec![ChatMessage::System(format!(
+                    "Cleared {} history entries.",
+                    count
+                ))],
                 None,
             ));
         }
@@ -818,7 +836,9 @@ impl Orchestrator {
             };
             output.push_str(&format!(
                 "  {} [{}] {}\n",
-                status_icon, entry.created_at, sql_preview.replace('\n', " ")
+                status_icon,
+                entry.created_at,
+                sql_preview.replace('\n', " ")
             ));
         }
 
@@ -834,7 +854,9 @@ impl Orchestrator {
             Some(db) => Arc::clone(db),
             None => {
                 return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error("State database not available.".to_string())],
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
                     None,
                 ));
             }
@@ -853,7 +875,9 @@ impl Orchestrator {
 
         if name.is_empty() {
             return Ok(InputResult::Messages(
-                vec![ChatMessage::Error("Usage: /savequery <name> [#tags...]".to_string())],
+                vec![ChatMessage::Error(
+                    "Usage: /savequery <name> [#tags...]".to_string(),
+                )],
                 None,
             ));
         }
@@ -862,7 +886,9 @@ impl Orchestrator {
             Some(sql) => sql.clone(),
             None => {
                 return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error("No query to save. Execute a query first.".to_string())],
+                    vec![ChatMessage::Error(
+                        "No query to save. Execute a query first.".to_string(),
+                    )],
                     None,
                 ));
             }
@@ -895,7 +921,9 @@ impl Orchestrator {
             Some(db) => db,
             None => {
                 return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error("State database not available.".to_string())],
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
                     None,
                 ));
             }
@@ -932,7 +960,8 @@ impl Orchestrator {
             }
         }
 
-        let queries = persistence::saved_queries::list_saved_queries(state_db.pool(), &filter).await?;
+        let queries =
+            persistence::saved_queries::list_saved_queries(state_db.pool(), &filter).await?;
 
         if queries.is_empty() {
             return Ok(InputResult::Messages(
@@ -946,12 +975,17 @@ impl Orchestrator {
             let tags_str = if query.tags.is_empty() {
                 String::new()
             } else {
-                format!(" [{}]", query.tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" "))
+                format!(
+                    " [{}]",
+                    query
+                        .tags
+                        .iter()
+                        .map(|t| format!("#{}", t))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
             };
-            let scope = query
-                .connection_name
-                .as_deref()
-                .unwrap_or("global");
+            let scope = query.connection_name.as_deref().unwrap_or("global");
             output.push_str(&format!(
                 "  • {} ({}){} - used {} times\n",
                 query.name, scope, tags_str, query.usage_count
@@ -977,7 +1011,9 @@ impl Orchestrator {
             Some(db) => Arc::clone(db),
             None => {
                 return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error("State database not available.".to_string())],
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
                     None,
                 ));
             }
@@ -1002,7 +1038,10 @@ impl Orchestrator {
                 ))
             }
             None => Ok(InputResult::Messages(
-                vec![ChatMessage::Error(format!("Saved query '{}' not found.", args))],
+                vec![ChatMessage::Error(format!(
+                    "Saved query '{}' not found.",
+                    args
+                ))],
                 None,
             )),
         }
@@ -1016,14 +1055,18 @@ impl Orchestrator {
 
         if subcommand != "delete" {
             return Ok(InputResult::Messages(
-                vec![ChatMessage::Error("Usage: /query delete <name>".to_string())],
+                vec![ChatMessage::Error(
+                    "Usage: /query delete <name>".to_string(),
+                )],
                 None,
             ));
         }
 
         if name.is_empty() {
             return Ok(InputResult::Messages(
-                vec![ChatMessage::Error("Usage: /query delete <name>".to_string())],
+                vec![ChatMessage::Error(
+                    "Usage: /query delete <name>".to_string(),
+                )],
                 None,
             ));
         }
@@ -1032,7 +1075,9 @@ impl Orchestrator {
             Some(db) => Arc::clone(db),
             None => {
                 return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error("State database not available.".to_string())],
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
                     None,
                 ));
             }
@@ -1046,7 +1091,10 @@ impl Orchestrator {
         .await
         {
             Ok(()) => Ok(InputResult::Messages(
-                vec![ChatMessage::System(format!("Saved query '{}' deleted.", name))],
+                vec![ChatMessage::System(format!(
+                    "Saved query '{}' deleted.",
+                    name
+                ))],
                 None,
             )),
             Err(e) => Ok(InputResult::Messages(
@@ -1066,7 +1114,9 @@ impl Orchestrator {
             Some(db) => Arc::clone(db),
             None => {
                 return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error("State database not available.".to_string())],
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
                     None,
                 ));
             }
@@ -1075,7 +1125,8 @@ impl Orchestrator {
         match subcommand.as_str() {
             "provider" => {
                 if value.is_empty() {
-                    let settings = persistence::llm_settings::get_llm_settings(state_db.pool()).await?;
+                    let settings =
+                        persistence::llm_settings::get_llm_settings(state_db.pool()).await?;
                     return Ok(InputResult::Messages(
                         vec![ChatMessage::System(format!(
                             "Current provider: {}. Use /llm provider <openai|anthropic|ollama> to change.",
@@ -1104,7 +1155,8 @@ impl Orchestrator {
             }
             "model" => {
                 if value.is_empty() {
-                    let settings = persistence::llm_settings::get_llm_settings(state_db.pool()).await?;
+                    let settings =
+                        persistence::llm_settings::get_llm_settings(state_db.pool()).await?;
                     return Ok(InputResult::Messages(
                         vec![ChatMessage::System(format!(
                             "Current model: {}. Use /llm model <name> to change.",
@@ -1116,7 +1168,10 @@ impl Orchestrator {
 
                 match persistence::llm_settings::set_model(state_db.pool(), value).await {
                     Ok(()) => Ok(InputResult::Messages(
-                        vec![ChatMessage::System(format!("LLM model set to '{}'.", value))],
+                        vec![ChatMessage::System(format!(
+                            "LLM model set to '{}'.",
+                            value
+                        ))],
                         None,
                     )),
                     Err(e) => Ok(InputResult::Messages(
@@ -1125,14 +1180,13 @@ impl Orchestrator {
                     )),
                 }
             }
-            "key" => {
-                Ok(InputResult::Messages(
-                    vec![ChatMessage::System(
-                        "API key input not yet implemented. Set via environment variable for now.".to_string(),
-                    )],
-                    None,
-                ))
-            }
+            "key" => Ok(InputResult::Messages(
+                vec![ChatMessage::System(
+                    "API key input not yet implemented. Set via environment variable for now."
+                        .to_string(),
+                )],
+                None,
+            )),
             _ => {
                 let settings = persistence::llm_settings::get_llm_settings(state_db.pool()).await?;
                 Ok(InputResult::Messages(

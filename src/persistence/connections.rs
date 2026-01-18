@@ -1,6 +1,8 @@
 //! Connection profile persistence.
 //!
-//! CRUD operations for saved database connection profiles.
+//! CRUD operations for saved database connections.
+
+#![allow(dead_code)]
 
 use crate::error::{GlanceError, Result};
 use crate::persistence::secrets::SecretStorage;
@@ -371,7 +373,9 @@ mod tests {
         let secrets = SecretStorage::new();
 
         let profile = ConnectionProfile::new("test".to_string(), "mydb".to_string());
-        create_connection(&pool, &profile, None, &secrets).await.unwrap();
+        create_connection(&pool, &profile, None, &secrets)
+            .await
+            .unwrap();
 
         let retrieved = get_connection(&pool, "test").await.unwrap().unwrap();
         assert_eq!(retrieved.name, "test");
@@ -386,8 +390,12 @@ mod tests {
         let profile1 = ConnectionProfile::new("alpha".to_string(), "db1".to_string());
         let profile2 = ConnectionProfile::new("beta".to_string(), "db2".to_string());
 
-        create_connection(&pool, &profile1, None, &secrets).await.unwrap();
-        create_connection(&pool, &profile2, None, &secrets).await.unwrap();
+        create_connection(&pool, &profile1, None, &secrets)
+            .await
+            .unwrap();
+        create_connection(&pool, &profile2, None, &secrets)
+            .await
+            .unwrap();
 
         let connections = list_connections(&pool).await.unwrap();
         assert_eq!(connections.len(), 2);
@@ -401,7 +409,9 @@ mod tests {
         let secrets = SecretStorage::new();
 
         let profile = ConnectionProfile::new("test".to_string(), "mydb".to_string());
-        create_connection(&pool, &profile, None, &secrets).await.unwrap();
+        create_connection(&pool, &profile, None, &secrets)
+            .await
+            .unwrap();
 
         delete_connection(&pool, "test", &secrets).await.unwrap();
 
@@ -415,7 +425,9 @@ mod tests {
         let secrets = SecretStorage::new();
 
         let profile = ConnectionProfile::new("test".to_string(), "mydb".to_string());
-        create_connection(&pool, &profile, None, &secrets).await.unwrap();
+        create_connection(&pool, &profile, None, &secrets)
+            .await
+            .unwrap();
 
         let result = create_connection(&pool, &profile, None, &secrets).await;
         assert!(result.is_err());
