@@ -57,6 +57,7 @@ dirs = "5.0"
 url = "2.5"
 arboard = "3.6.1"
 dotenvy = "0.15"
+regex = "1.10"
 
 # Secure storage
 keyring = "3"

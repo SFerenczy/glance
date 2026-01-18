@@ -7,6 +7,33 @@ use crate::error::Result;
 use clap::Parser;
 use std::path::PathBuf;
 
+/// Output format for headless mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OutputFormat {
+    /// Plain text output of the final screen.
+    #[default]
+    Text,
+    /// JSON output with screen, state, and metadata.
+    Json,
+    /// Frame-by-frame output showing state after each event.
+    Frames,
+}
+
+impl std::str::FromStr for OutputFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "text" => Ok(Self::Text),
+            "json" => Ok(Self::Json),
+            "frames" => Ok(Self::Frames),
+            _ => Err(format!(
+                "Invalid output format: {s}. Expected: text, json, or frames"
+            )),
+        }
+    }
+}
+
 /// A lightweight, AI-first database viewer.
 #[derive(Parser, Debug)]
 #[command(name = "glance")]
@@ -43,6 +70,47 @@ pub struct Cli {
     /// Config file path
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
+
+    // === Headless mode options ===
+    /// Run in headless mode (no terminal UI, for testing/automation)
+    #[arg(long)]
+    pub headless: bool,
+
+    /// Use mock database (in-memory, for testing)
+    #[arg(long)]
+    pub mock_db: bool,
+
+    /// Comma-separated events to execute in headless mode (e.g., "type:hello,key:enter")
+    #[arg(long, value_name = "EVENTS")]
+    pub events: Option<String>,
+
+    /// Path to script file with events (use "-" for stdin)
+    #[arg(long, value_name = "PATH")]
+    pub script: Option<String>,
+
+    /// Screen size for headless mode (WIDTHxHEIGHT, e.g., "80x24")
+    #[arg(long, value_name = "SIZE", default_value = "80x24")]
+    pub size: String,
+
+    /// Output format for headless mode
+    #[arg(long, value_name = "FORMAT", default_value = "text")]
+    pub output: String,
+
+    /// Write output to file instead of stdout
+    #[arg(long, value_name = "PATH")]
+    pub output_file: Option<PathBuf>,
+
+    /// Stop on first assertion failure
+    #[arg(long)]
+    pub fail_fast: bool,
+
+    /// SQL seed file for mock database
+    #[arg(long, value_name = "PATH")]
+    pub seed: Option<PathBuf>,
+
+    /// LLM provider to use (overrides config in headless mode)
+    #[arg(long, value_name = "PROVIDER")]
+    pub llm: Option<String>,
 }
 
 impl Cli {
@@ -95,6 +163,56 @@ impl Cli {
     #[allow(dead_code)] // Will be used when password prompting is implemented
     pub fn prompt_password(&self) -> bool {
         self.password
+    }
+
+    /// Returns true if headless mode is enabled.
+    pub fn is_headless(&self) -> bool {
+        self.headless
+    }
+
+    /// Parses the screen size from the --size argument.
+    /// Returns (width, height) or an error.
+    pub fn parse_screen_size(&self) -> std::result::Result<(u16, u16), String> {
+        let parts: Vec<&str> = self.size.split('x').collect();
+        if parts.len() != 2 {
+            return Err(format!(
+                "Invalid size format: '{}'. Expected WIDTHxHEIGHT (e.g., 80x24)",
+                self.size
+            ));
+        }
+        let width = parts[0]
+            .parse::<u16>()
+            .map_err(|_| format!("Invalid width: '{}'", parts[0]))?;
+        let height = parts[1]
+            .parse::<u16>()
+            .map_err(|_| format!("Invalid height: '{}'", parts[1]))?;
+        Ok((width, height))
+    }
+
+    /// Parses the output format from the --output argument.
+    pub fn parse_output_format(&self) -> std::result::Result<OutputFormat, String> {
+        self.output.parse()
+    }
+
+    /// Validates headless mode arguments.
+    /// Returns an error message if validation fails.
+    pub fn validate_headless(&self) -> std::result::Result<(), String> {
+        if !self.headless {
+            return Ok(());
+        }
+
+        // Headless mode requires either --events or --script
+        if self.events.is_none() && self.script.is_none() {
+            return Err("--headless requires --events or --script".to_string());
+        }
+
+        // Validate screen size
+        self.parse_screen_size()?;
+
+        // Validate output format
+        self.parse_output_format()?;
+
+        Ok(())
     }
 }
 
@@ -225,5 +343,125 @@ mod tests {
 
         // Connection string takes precedence
         assert_eq!(config.host, Some("localhost".to_string()));
+    }
+
+    // === Headless mode tests ===
+
+    #[test]
+    fn test_parse_headless_flag() {
+        let cli = parse_args(&["glance", "--headless", "--mock-db", "--events", "key:esc"]);
+        assert!(cli.headless);
+        assert!(cli.mock_db);
+        assert_eq!(cli.events, Some("key:esc".to_string()));
+    }
+
+    #[test]
+    fn test_parse_headless_with_script() {
+        let cli = parse_args(&["glance", "--headless", "--mock-db", "--script", "test.txt"]);
+        assert!(cli.headless);
+        assert_eq!(cli.script, Some("test.txt".to_string()));
+    }
+
+    #[test]
+    fn test_parse_screen_size() {
+        let cli = parse_args(&["glance", "--size", "120x40"]);
+        let (w, h) = cli.parse_screen_size().unwrap();
+        assert_eq!(w, 120);
+        assert_eq!(h, 40);
+    }
+
+    #[test]
+    fn test_parse_screen_size_invalid() {
+        let cli = parse_args(&["glance", "--size", "invalid"]);
+        assert!(cli.parse_screen_size().is_err());
+    }
+
+    #[test]
+    fn test_parse_output_format() {
+        let cli = parse_args(&["glance", "--output", "json"]);
+        assert_eq!(cli.parse_output_format().unwrap(), OutputFormat::Json);
+
+        let cli = parse_args(&["glance", "--output", "text"]);
+        assert_eq!(cli.parse_output_format().unwrap(), OutputFormat::Text);
+
+        let cli = parse_args(&["glance", "--output", "frames"]);
+        assert_eq!(cli.parse_output_format().unwrap(), OutputFormat::Frames);
+    }
+
+    #[test]
+    fn test_validate_headless_requires_events_or_script() {
+        let cli = parse_args(&["glance", "--headless", "--mock-db"]);
+        let result = cli.validate_headless();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("requires --events or --script"));
+    }
+
+    #[test]
+    fn test_validate_headless_with_events() {
+        let cli = parse_args(&["glance", "--headless", "--mock-db", "--events", "key:esc"]);
+        assert!(cli.validate_headless().is_ok());
+    }
+
+    #[test]
+    fn test_validate_headless_with_script() {
+        let cli = parse_args(&["glance", "--headless", "--mock-db", "--script", "-"]);
+        assert!(cli.validate_headless().is_ok());
+    }
+
+    #[test]
+    fn test_headless_output_file() {
+        let cli = parse_args(&[
+            "glance",
+            "--headless",
+            "--mock-db",
+            "--events",
+            "key:esc",
+            "--output-file",
+            "result.json",
+        ]);
+        assert_eq!(cli.output_file, Some(PathBuf::from("result.json")));
+    }
+
+    #[test]
+    fn test_headless_fail_fast() {
+        let cli = parse_args(&[
+            "glance",
+            "--headless",
+            "--mock-db",
+            "--events",
+            "key:esc",
+            "--fail-fast",
+        ]);
+        assert!(cli.fail_fast);
+    }
+
+    #[test]
+    fn test_headless_seed_file() {
+        let cli = parse_args(&[
+            "glance",
+            "--headless",
+            "--mock-db",
+            "--events",
+            "key:esc",
+            "--seed",
+            "tests/fixtures/seed.sql",
+        ]);
+        assert_eq!(cli.seed, Some(PathBuf::from("tests/fixtures/seed.sql")));
+    }
+
+    #[test]
+    fn test_headless_llm_override() {
+        let cli = parse_args(&[
+            "glance",
+            "--headless",
+            "--mock-db",
+            "--events",
+            "key:esc",
+            "--llm",
+            "anthropic",
+        ]);
+        assert_eq!(cli.llm, Some("anthropic".to_string()));
     }
 }

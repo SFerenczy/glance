@@ -110,6 +110,47 @@ Then just run `glance` with no arguments.
 - [Roadmap](docs/ROADMAP.md) — Feature milestones
 - [v0.1 Specification](docs/specs/v0.1.md) — Detailed requirements
 
+## Headless Mode
+
+Glance supports headless mode for AI-assisted testing and automation. Run without a terminal UI, execute scripted events, and capture output for verification.
+
+### Basic Usage
+
+```bash
+# Run with inline events
+glance --headless --mock-db --events "type:hello,key:enter"
+
+# Run with script file
+glance --headless --mock-db --script tests/tui/fixtures/basic_flow.txt
+
+# JSON output for programmatic analysis
+glance --headless --mock-db --events "type:test" --output json
+
+# Frame-by-frame debugging
+glance --headless --mock-db --events "type:a,type:b" --output frames
+```
+
+### Event DSL
+
+| Event              | Example                    | Description                       |
+| ------------------ | -------------------------- | --------------------------------- |
+| `key:`             | `key:enter`, `key:ctrl+c`  | Key press with optional modifiers |
+| `type:`            | `type:hello world`         | Type text into input              |
+| `wait:`            | `wait:100ms`, `wait:2s`    | Wait for duration                 |
+| `resize:`          | `resize:120x40`            | Resize terminal                   |
+| `assert:contains:` | `assert:contains:hello`    | Assert screen contains text       |
+| `assert:state:`    | `assert:state:focus=Input` | Assert application state          |
+
+### Exit Codes
+
+| Code | Meaning                          |
+| ---- | -------------------------------- |
+| 0    | Success (all assertions passed)  |
+| 1    | Test failure (assertions failed) |
+| 2    | Error (invalid syntax, etc.)     |
+
+See [v0.2e Specification](docs/specs/v0.2e.md) for complete documentation.
+
 ## Development
 
 ```bash

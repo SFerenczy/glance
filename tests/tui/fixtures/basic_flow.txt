@@ -1,0 +1,17 @@
+# Basic flow test script for headless mode
+# Tests typing, assertions, and basic navigation
+
+# Type a query
+type:show tables
+
+# Assert the input contains our text
+assert:contains:show tables
+
+# Submit with Enter
+key:enter
+
+# Wait for processing
+wait:100ms
+
+# Assert we see the welcome message
+assert:contains:Welcome to Glance

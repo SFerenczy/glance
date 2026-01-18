@@ -184,6 +184,73 @@ Feature: Query execution
 
 ---
 
+## TUI Debugging with Headless Mode
+
+Glance includes a headless mode for AI-assisted TUI debugging. Use this to test UI behavior without a terminal.
+
+### Running Headless Tests
+
+```bash
+# Basic execution with inline events
+glance --headless --mock-db --events "type:hello,key:enter"
+
+# Load events from a script file
+glance --headless --mock-db --script tests/tui/fixtures/basic_flow.txt
+
+# Get JSON output for programmatic analysis
+glance --headless --mock-db --events "type:test" --output json
+
+# Frame-by-frame debugging (see state after each event)
+glance --headless --mock-db --events "type:a,type:b" --output frames
+```
+
+### Event DSL Reference
+
+| Event                  | Example                             | Description                                    |
+| ---------------------- | ----------------------------------- | ---------------------------------------------- |
+| `key:`                 | `key:enter`, `key:ctrl+c`, `key:f1` | Key press with optional modifiers              |
+| `type:`                | `type:hello world`                  | Type text into input field                     |
+| `wait:`                | `wait:100ms`, `wait:2s`             | Wait for duration                              |
+| `resize:`              | `resize:120x40`                     | Resize terminal to WxH                         |
+| `assert:contains:`     | `assert:contains:hello`             | Assert screen contains text (case-insensitive) |
+| `assert:not-contains:` | `assert:not-contains:error`         | Assert screen does NOT contain text            |
+| `assert:matches:`      | `assert:matches:user\d+`            | Assert screen matches regex                    |
+| `assert:state:`        | `assert:state:focus=Input`          | Assert application state field                 |
+
+### Script File Format
+
+```txt
+# Comments start with #
+type:show tables
+key:enter
+wait:100ms
+assert:contains:Welcome
+```
+
+### Exit Codes
+
+| Code | Meaning                                      |
+| ---- | -------------------------------------------- |
+| 0    | Success (all assertions passed)              |
+| 1    | Test failure (one or more assertions failed) |
+| 2    | Error (invalid syntax, configuration error)  |
+
+### Debugging Workflow
+
+1. **Reproduce the issue**: Write events that trigger the bug
+2. **Use frames output**: See exactly what happens after each event
+3. **Add assertions**: Verify expected behavior at each step
+4. **Iterate**: Refine events until the issue is isolated
+
+### Example: Testing Input Flow
+
+```bash
+glance --headless --mock-db --output frames --events \
+  "type:show users,assert:contains:show users,key:enter,wait:100"
+```
+
+---
+
 ## What to Update
 
 When modifying this project:

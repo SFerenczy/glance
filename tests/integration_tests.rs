@@ -6,3 +6,4 @@
 //! Run with: `cargo test --test integration_tests`
 
 mod integration;
+mod tui;

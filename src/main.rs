@@ -46,6 +46,15 @@ async fn run() -> Result<()> {
     // Parse CLI arguments
     let cli = Cli::parse_args();
 
+    // Handle headless mode
+    if cli.is_headless() {
+        let exit_code = tui::headless::run_headless(&cli).await?;
+        if exit_code != 0 {
+            std::process::exit(exit_code);
+        }
+        return Ok(());
+    }
+
     // Load configuration file
     let config_path = cli.config_path();
     info!("Loading config from: {}", config_path.display());

@@ -5,6 +5,7 @@
 pub mod app;
 mod clipboard;
 mod events;
+pub mod headless;
 mod history;
 mod sql_autocomplete;
 mod ui;
