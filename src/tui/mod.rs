@@ -300,17 +300,13 @@ impl Tui {
                             // Confirm the query
                             if let Some(pending) = app_state.take_pending_query() {
                                 app_state.is_processing = true;
-                                let messages = orchestrator.confirm_query(&pending.sql).await;
+                                let (messages, log_entry) =
+                                    orchestrator.confirm_query(&pending.sql).await;
                                 for msg in messages {
-                                    if let app::ChatMessage::Result(ref result) = msg {
-                                        let entry = app::QueryLogEntry::success(
-                                            pending.sql.clone(),
-                                            result.execution_time,
-                                            result.row_count,
-                                        );
-                                        app_state.add_query_log(entry);
-                                    }
                                     app_state.add_message(msg);
+                                }
+                                if let Some(entry) = log_entry {
+                                    app_state.add_query_log(entry);
                                 }
                                 app_state.is_processing = false;
                             }
@@ -418,14 +414,15 @@ impl Tui {
     ) {
         match result {
             InputResult::None => {}
-            InputResult::Messages(messages) => {
+            InputResult::Messages(messages, log_entry) => {
                 for msg in messages {
-                    // Track query log entries for results
                     if let app::ChatMessage::Result(ref query_result) = msg {
-                        // The query log entry should be added by the orchestrator
                         debug!("Query returned {} rows", query_result.row_count);
                     }
                     app_state.add_message(msg);
+                }
+                if let Some(entry) = log_entry {
+                    app_state.add_query_log(entry);
                 }
             }
             InputResult::NeedsConfirmation {
@@ -449,9 +446,12 @@ impl Tui {
             AsyncMessage::InputResult(result) => {
                 app_state.is_processing = false;
                 match result {
-                    Ok(InputResult::Messages(messages)) => {
+                    Ok(InputResult::Messages(messages, log_entry)) => {
                         for m in messages {
                             app_state.add_message(m);
+                        }
+                        if let Some(entry) = log_entry {
+                            app_state.add_query_log(entry);
                         }
                     }
                     Ok(InputResult::NeedsConfirmation {

@@ -36,8 +36,8 @@ Keyboard shortcuts:
 pub enum InputResult {
     /// No action needed (empty input, etc.)
     None,
-    /// Messages to add to the chat.
-    Messages(Vec<ChatMessage>),
+    /// Messages to add to the chat, with an optional query log entry.
+    Messages(Vec<ChatMessage>, Option<QueryLogEntry>),
     /// A query needs confirmation before execution.
     NeedsConfirmation {
         sql: String,
@@ -153,33 +153,42 @@ impl Orchestrator {
         match command.as_str() {
             "/sql" => {
                 if args.is_empty() {
-                    return Ok(InputResult::Messages(vec![ChatMessage::Error(
-                        "Usage: /sql <query>".to_string(),
-                    )]));
+                    return Ok(InputResult::Messages(
+                        vec![ChatMessage::Error("Usage: /sql <query>".to_string())],
+                        None,
+                    ));
                 }
                 self.handle_sql(args).await
             }
             "/clear" => {
                 self.conversation.clear();
-                Ok(InputResult::Messages(vec![ChatMessage::System(
-                    "Chat history and context cleared.".to_string(),
-                )]))
+                Ok(InputResult::Messages(
+                    vec![ChatMessage::System(
+                        "Chat history and context cleared.".to_string(),
+                    )],
+                    None,
+                ))
             }
             "/schema" => {
                 let schema_text = self.schema.format_for_display();
-                Ok(InputResult::Messages(vec![ChatMessage::System(
-                    schema_text,
-                )]))
+                Ok(InputResult::Messages(
+                    vec![ChatMessage::System(schema_text)],
+                    None,
+                ))
             }
             "/quit" | "/exit" => Ok(InputResult::Exit),
             "/vim" => Ok(InputResult::ToggleVimMode),
-            "/help" => Ok(InputResult::Messages(vec![ChatMessage::System(
-                HELP_TEXT.to_string(),
-            )])),
-            _ => Ok(InputResult::Messages(vec![ChatMessage::Error(format!(
-                "Unknown command: {}. Type /help for available commands.",
-                command
-            ))])),
+            "/help" => Ok(InputResult::Messages(
+                vec![ChatMessage::System(HELP_TEXT.to_string())],
+                None,
+            )),
+            _ => Ok(InputResult::Messages(
+                vec![ChatMessage::Error(format!(
+                    "Unknown command: {}. Type /help for available commands.",
+                    command
+                ))],
+                None,
+            )),
         }
     }
 
@@ -201,6 +210,7 @@ impl Orchestrator {
         let parsed = parse_llm_response(&response);
 
         let mut result_messages = Vec::new();
+        let mut log_entry = None;
 
         // Add any explanatory text
         if !parsed.text.is_empty() {
@@ -210,7 +220,10 @@ impl Orchestrator {
         // If SQL was found, handle it
         if let Some(sql) = parsed.sql {
             match self.handle_sql(&sql).await? {
-                InputResult::Messages(msgs) => result_messages.extend(msgs),
+                InputResult::Messages(msgs, entry) => {
+                    result_messages.extend(msgs);
+                    log_entry = entry;
+                }
                 InputResult::NeedsConfirmation {
                     sql,
                     classification,
@@ -224,7 +237,7 @@ impl Orchestrator {
             }
         }
 
-        Ok(InputResult::Messages(result_messages))
+        Ok(InputResult::Messages(result_messages, log_entry))
     }
 
     /// Handles SQL execution with safety classification.
@@ -235,8 +248,8 @@ impl Orchestrator {
         match classification.level {
             SafetyLevel::Safe => {
                 // Auto-execute safe queries
-                let messages = self.execute_and_format(sql).await;
-                Ok(InputResult::Messages(messages))
+                let (messages, log_entry) = self.execute_and_format(sql).await;
+                Ok(InputResult::Messages(messages, log_entry))
             }
             SafetyLevel::Mutating | SafetyLevel::Destructive => {
                 // Needs confirmation
@@ -248,20 +261,24 @@ impl Orchestrator {
         }
     }
 
-    /// Executes a SQL query and returns formatted messages.
-    pub async fn execute_and_format(&mut self, sql: &str) -> Vec<ChatMessage> {
+    /// Executes a SQL query and returns formatted messages with a log entry.
+    pub async fn execute_and_format(&mut self, sql: &str) -> (Vec<ChatMessage>, Option<QueryLogEntry>) {
         match self.execute_query(sql).await {
             Ok((result, entry)) => {
-                vec![
+                let messages = vec![
                     ChatMessage::System(format!("Query executed in {:?}", entry.execution_time)),
                     ChatMessage::Result(result),
-                ]
+                ];
+                (messages, Some(entry))
             }
             Err(e) => {
-                vec![ChatMessage::Error(format!(
-                    "Error executing query:\n  {}",
-                    e
-                ))]
+                (
+                    vec![ChatMessage::Error(format!(
+                        "Error executing query:\n  {}",
+                        e
+                    ))],
+                    None,
+                )
             }
         }
     }
@@ -294,7 +311,7 @@ impl Orchestrator {
     }
 
     /// Confirms and executes a pending query.
-    pub async fn confirm_query(&mut self, sql: &str) -> Vec<ChatMessage> {
+    pub async fn confirm_query(&mut self, sql: &str) -> (Vec<ChatMessage>, Option<QueryLogEntry>) {
         self.execute_and_format(sql).await
     }
 
@@ -370,8 +387,9 @@ mod tests {
         let result = orchestrator.handle_input("/help").await.unwrap();
 
         match result {
-            InputResult::Messages(msgs) => {
+            InputResult::Messages(msgs, log_entry) => {
                 assert_eq!(msgs.len(), 1);
+                assert!(log_entry.is_none());
                 match &msgs[0] {
                     ChatMessage::System(text) => {
                         assert!(text.contains("/sql"));
@@ -408,8 +426,9 @@ mod tests {
         let result = orchestrator.handle_input("/clear").await.unwrap();
 
         match result {
-            InputResult::Messages(msgs) => {
+            InputResult::Messages(msgs, log_entry) => {
                 assert_eq!(msgs.len(), 1);
+                assert!(log_entry.is_none());
                 match &msgs[0] {
                     ChatMessage::System(text) => {
                         assert!(text.contains("cleared"));
@@ -431,8 +450,9 @@ mod tests {
         let result = orchestrator.handle_input("/schema").await.unwrap();
 
         match result {
-            InputResult::Messages(msgs) => {
+            InputResult::Messages(msgs, log_entry) => {
                 assert_eq!(msgs.len(), 1);
+                assert!(log_entry.is_none());
                 match &msgs[0] {
                     ChatMessage::System(text) => {
                         assert!(text.contains("users"));
@@ -451,8 +471,9 @@ mod tests {
         let result = orchestrator.handle_input("/unknown").await.unwrap();
 
         match result {
-            InputResult::Messages(msgs) => {
+            InputResult::Messages(msgs, log_entry) => {
                 assert_eq!(msgs.len(), 1);
+                assert!(log_entry.is_none());
                 match &msgs[0] {
                     ChatMessage::Error(text) => {
                         assert!(text.contains("Unknown command"));
@@ -471,8 +492,9 @@ mod tests {
         let result = orchestrator.handle_input("/sql").await.unwrap();
 
         match result {
-            InputResult::Messages(msgs) => {
+            InputResult::Messages(msgs, log_entry) => {
                 assert_eq!(msgs.len(), 1);
+                assert!(log_entry.is_none());
                 match &msgs[0] {
                     ChatMessage::Error(text) => {
                         assert!(text.contains("Usage"));
@@ -493,7 +515,7 @@ mod tests {
 
         // Without a database, this will return an error message
         match result {
-            InputResult::Messages(msgs) => {
+            InputResult::Messages(msgs, _log_entry) => {
                 // Should have error about no database connection
                 assert!(!msgs.is_empty());
             }
