@@ -62,6 +62,7 @@ This document defines the development principles and rules for AI agents working
 - Atomic commits with clear messages.
 - Keep PRs focused and reviewable.
 - Update docs in the same commit as related code changes.
+- Before creating a commit run `just precommit` to run all checks.
 
 ---
 
