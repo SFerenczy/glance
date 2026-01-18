@@ -11,6 +11,7 @@ pub mod ollama;
 pub mod openai;
 pub mod parser;
 pub mod prompt;
+pub mod tools;
 pub mod types;
 
 pub use anthropic::{AnthropicClient, AnthropicConfig};
@@ -19,6 +20,7 @@ pub use ollama::{OllamaClient, OllamaConfig};
 pub use openai::{OpenAiClient, OpenAiConfig};
 pub use parser::{parse_llm_response, ParsedResponse};
 pub use prompt::{build_messages, build_system_prompt};
+pub use tools::{get_tool_definitions, format_saved_queries_for_llm, ListSavedQueriesInput, SavedQueryOutput, ToolDefinition};
 pub use types::{Conversation, Message, Role};
 
 use async_trait::async_trait;

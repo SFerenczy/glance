@@ -205,6 +205,21 @@ impl ConnectionConfig {
         let database = self.database.as_deref().unwrap_or("unknown");
         format!("{database} @ {host}:{}", self.port)
     }
+
+    /// Returns a redacted display string safe for LLM context.
+    /// Only includes database name, no host/user/password.
+    pub fn redacted_for_llm(&self) -> String {
+        self.database
+            .as_deref()
+            .unwrap_or("unknown")
+            .to_string()
+    }
+
+    /// Returns a display string with redacted host for UI.
+    pub fn display_string_redacted(&self) -> String {
+        let database = self.database.as_deref().unwrap_or("unknown");
+        format!("{database} @ ******:{}", self.port)
+    }
 }
 
 impl Config {

@@ -31,7 +31,7 @@ const HELP_TEXT: &str = r#"Available commands:
 Connection commands:
   /connections     - List saved connections
   /connect <name>  - Switch to a saved connection
-  /conn add <name> - Add a new connection
+  /conn add <name> host=... database=... [--test]
   /conn edit <name> - Edit an existing connection
   /conn delete <name> - Delete a connection
 
@@ -630,6 +630,7 @@ impl Orchestrator {
         let mut user = None;
         let mut password = None;
         let mut sslmode = None;
+        let mut test_connection = false;
 
         for part in args.split_whitespace() {
             if let Some((key, value)) = part.split_once('=') {
@@ -642,6 +643,8 @@ impl Orchestrator {
                     "sslmode" => sslmode = Some(value.to_string()),
                     _ => {}
                 }
+            } else if part == "--test" || part == "-t" {
+                test_connection = true;
             } else if name.is_empty() {
                 name = part.to_string();
             }
@@ -666,9 +669,38 @@ impl Orchestrator {
             }
         };
 
+        let db_name = database.clone().unwrap();
+
+        if test_connection {
+            let test_config = ConnectionConfig {
+                host: host.clone(),
+                port,
+                database: database.clone(),
+                user: user.clone(),
+                password: password.clone(),
+                sslmode: sslmode.clone(),
+                extras: None,
+            };
+
+            match PostgresClient::connect(&test_config).await {
+                Ok(db) => {
+                    let _ = db.close().await;
+                }
+                Err(e) => {
+                    return Ok(InputResult::Messages(
+                        vec![ChatMessage::Error(format!(
+                            "Connection test failed: {}. Connection not saved.",
+                            e
+                        ))],
+                        None,
+                    ));
+                }
+            }
+        }
+
         let profile = ConnectionProfile {
             name: name.clone(),
-            database: database.unwrap(),
+            database: db_name,
             host,
             port,
             username: user,
@@ -688,13 +720,20 @@ impl Orchestrator {
         )
         .await
         {
-            Ok(()) => Ok(InputResult::Messages(
-                vec![ChatMessage::System(format!(
-                    "Connection '{}' saved. Use /connect {} to use it.",
-                    name, name
-                ))],
-                None,
-            )),
+            Ok(()) => {
+                let test_msg = if test_connection {
+                    " (connection tested successfully)"
+                } else {
+                    ""
+                };
+                Ok(InputResult::Messages(
+                    vec![ChatMessage::System(format!(
+                        "Connection '{}' saved{}. Use /connect {} to use it.",
+                        name, test_msg, name
+                    ))],
+                    None,
+                ))
+            }
             Err(e) => Ok(InputResult::Messages(
                 vec![ChatMessage::Error(e.to_string())],
                 None,
