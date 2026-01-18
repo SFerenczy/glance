@@ -18,6 +18,16 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
+    // Load .env file if present (before anything else)
+    if let Err(e) = dotenvy::dotenv() {
+        // Not an error if .env doesn't exist, only if it exists but can't be read
+        if e.not_found() {
+            // .env file not found, that's fine
+        } else {
+            eprintln!("Warning: Failed to load .env file: {}", e);
+        }
+    }
+
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
