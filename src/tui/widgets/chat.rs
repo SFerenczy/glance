@@ -3,7 +3,7 @@
 //! Displays the conversation history and query results.
 
 use super::table::ResultTable;
-use crate::tui::app::ChatMessage;
+use crate::tui::app::{ChatMessage, TextSelection};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -18,6 +18,7 @@ pub struct ChatPanel<'a> {
     scroll_offset: usize,
     focused: bool,
     has_new_messages: bool,
+    text_selection: Option<&'a TextSelection>,
 }
 
 impl<'a> ChatPanel<'a> {
@@ -27,12 +28,14 @@ impl<'a> ChatPanel<'a> {
         scroll_offset: usize,
         focused: bool,
         has_new_messages: bool,
+        text_selection: Option<&'a TextSelection>,
     ) -> Self {
         Self {
             messages,
             scroll_offset,
             focused,
             has_new_messages,
+            text_selection,
         }
     }
 
@@ -168,6 +171,53 @@ impl<'a> ChatPanel<'a> {
 
         lines
     }
+
+    /// Renders the text selection with inverted colors.
+    fn render_selection(&self, buf: &mut Buffer, area: Rect, selection: &TextSelection) {
+        // Normalize selection (start should be before end)
+        let (start, end) = if selection.start.0 < selection.end.0
+            || (selection.start.0 == selection.end.0 && selection.start.1 <= selection.end.1)
+        {
+            (selection.start, selection.end)
+        } else {
+            (selection.end, selection.start)
+        };
+
+        // Selection style: inverted colors
+        let selection_style = Style::default()
+            .bg(Color::White)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD);
+
+        // Iterate over the selected rows
+        for row in start.0..=end.0 {
+            // Skip rows outside the chat area
+            if row < area.y || row >= area.y + area.height {
+                continue;
+            }
+
+            // Determine column range for this row
+            let col_start = if row == start.0 {
+                start.1.max(area.x)
+            } else {
+                area.x
+            };
+            let col_end = if row == end.0 {
+                end.1.min(area.x + area.width)
+            } else {
+                area.x + area.width
+            };
+
+            // Apply selection style to each cell in the range
+            for col in col_start..col_end {
+                if col >= area.x && col < area.x + area.width {
+                    if let Some(cell) = buf.cell_mut((col, row)) {
+                        cell.set_style(selection_style);
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Widget for ChatPanel<'_> {
@@ -211,6 +261,11 @@ impl Widget for ChatPanel<'_> {
 
         paragraph.render(area, buf);
 
+        // Render text selection with inverted colors
+        if let Some(selection) = self.text_selection {
+            self.render_selection(buf, area, selection);
+        }
+
         // Show "new messages" indicator if scrolled up and there are new messages
         if self.has_new_messages && self.scroll_offset > 0 {
             let indicator = "↓ New messages ↓";
@@ -239,7 +294,7 @@ mod tests {
     #[test]
     fn test_chat_panel_empty() {
         let messages: Vec<ChatMessage> = vec![];
-        let panel = ChatPanel::new(&messages, 0, false, false);
+        let panel = ChatPanel::new(&messages, 0, false, false, None);
         let lines = panel.render_messages(80);
         assert!(lines.is_empty());
     }
@@ -247,7 +302,7 @@ mod tests {
     #[test]
     fn test_chat_panel_user_message() {
         let messages = vec![ChatMessage::User("Hello".to_string())];
-        let panel = ChatPanel::new(&messages, 0, false, false);
+        let panel = ChatPanel::new(&messages, 0, false, false, None);
         let lines = panel.render_messages(80);
 
         // Should have label + content
@@ -257,7 +312,7 @@ mod tests {
     #[test]
     fn test_chat_panel_multiline_message() {
         let messages = vec![ChatMessage::User("Line 1\nLine 2\nLine 3".to_string())];
-        let panel = ChatPanel::new(&messages, 0, false, false);
+        let panel = ChatPanel::new(&messages, 0, false, false, None);
         let lines = panel.render_messages(80);
 
         // Should have label + 3 content lines
@@ -275,7 +330,7 @@ mod tests {
             was_truncated: false,
         };
         let messages = vec![ChatMessage::Result(result)];
-        let panel = ChatPanel::new(&messages, 0, false, false);
+        let panel = ChatPanel::new(&messages, 0, false, false, None);
         let lines = panel.render_messages(80);
 
         // Should have table lines
@@ -288,7 +343,7 @@ mod tests {
             ChatMessage::User("Hello".to_string()),
             ChatMessage::Assistant("Hi there!".to_string()),
         ];
-        let panel = ChatPanel::new(&messages, 0, false, false);
+        let panel = ChatPanel::new(&messages, 0, false, false, None);
         let lines = panel.render_messages(80);
 
         // Should have lines for both messages plus spacing

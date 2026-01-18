@@ -12,7 +12,7 @@ use ratatui::{
 };
 
 /// Renders the entire UI.
-pub fn render(frame: &mut Frame, app: &App) {
+pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     // Main layout: header, content, input
@@ -46,6 +46,9 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let chat_area = content_layout[0];
     let sidebar_area = content_layout[1];
+
+    // Store chat area for mouse hit testing
+    app.chat_area = Some(chat_area);
 
     // Render components
     render_header(frame, header_area, app);
@@ -106,6 +109,7 @@ fn render_chat(frame: &mut Frame, area: Rect, app: &App) {
         app.chat_scroll,
         focused,
         app.has_new_messages,
+        app.text_selection.as_ref(),
     );
     frame.render_widget(widget, area);
 }

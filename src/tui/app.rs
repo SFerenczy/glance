@@ -291,6 +291,21 @@ pub struct App {
     pub is_connected: bool,
     /// Whether vim-style navigation is enabled (toggled via /vim command).
     pub vim_mode_enabled: bool,
+    /// Text selection state for copy functionality.
+    pub text_selection: Option<TextSelection>,
+    /// The area where the chat panel was last rendered (for mouse hit testing).
+    pub chat_area: Option<ratatui::layout::Rect>,
+}
+
+/// Represents a text selection in the chat panel.
+#[derive(Debug, Clone)]
+pub struct TextSelection {
+    /// Starting position (row, column) in screen coordinates.
+    pub start: (u16, u16),
+    /// Ending position (row, column) in screen coordinates.
+    pub end: (u16, u16),
+    /// Whether the selection is currently being dragged.
+    pub is_dragging: bool,
 }
 
 /// A query that is pending user confirmation.
@@ -337,6 +352,8 @@ impl App {
             ring_bell: false,
             is_connected: true,      // Assume connected initially
             vim_mode_enabled: false, // Vim mode disabled by default
+            text_selection: None,
+            chat_area: None,
         }
     }
 
@@ -527,13 +544,17 @@ impl App {
         match event {
             Event::Key(key) => {
                 match key.code {
-                    // Exit commands
+                    // Ctrl+C: copy selection if present, otherwise exit
                     KeyCode::Char('c')
                         if key
                             .modifiers
                             .contains(crossterm::event::KeyModifiers::CONTROL) =>
                     {
-                        self.running = false;
+                        if self.text_selection.is_some() {
+                            self.copy_selection();
+                        } else {
+                            self.running = false;
+                        }
                     }
                     KeyCode::Char('q')
                         if key
@@ -599,6 +620,9 @@ impl App {
                     _ => {}
                 }
             }
+            Event::Mouse(mouse) => {
+                self.handle_mouse_event(mouse);
+            }
             Event::Resize(width, height) => {
                 // Terminal resize: clamp scroll position to valid range
                 // The actual re-render is handled automatically by ratatui
@@ -607,6 +631,53 @@ impl App {
             Event::Tick => {
                 // Periodic tick for animations/updates (not used yet)
             }
+        }
+    }
+
+    /// Handles mouse events for text selection.
+    fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) {
+        use crossterm::event::{MouseButton, MouseEventKind};
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Check if click is within chat area
+                if let Some(area) = self.chat_area {
+                    if mouse.column >= area.x
+                        && mouse.column < area.x + area.width
+                        && mouse.row >= area.y
+                        && mouse.row < area.y + area.height
+                    {
+                        // Start a new selection
+                        self.text_selection = Some(TextSelection {
+                            start: (mouse.row, mouse.column),
+                            end: (mouse.row, mouse.column),
+                            is_dragging: true,
+                        });
+                    } else {
+                        // Click outside chat area clears selection
+                        self.text_selection = None;
+                    }
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                // Update selection end point while dragging
+                if let Some(ref mut selection) = self.text_selection {
+                    if selection.is_dragging {
+                        selection.end = (mouse.row, mouse.column);
+                    }
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                // End dragging
+                if let Some(ref mut selection) = self.text_selection {
+                    selection.is_dragging = false;
+                    // If start and end are the same, clear selection (it was just a click)
+                    if selection.start == selection.end {
+                        self.text_selection = None;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -863,6 +934,149 @@ impl App {
         } else {
             self.show_toast("No SQL to copy");
         }
+    }
+
+    /// Copies the selected text to the clipboard.
+    fn copy_selection(&mut self) {
+        if let Some(ref selection) = self.text_selection {
+            // Get the selected text from the rendered chat content
+            if let Some(text) = self.get_selected_text(selection) {
+                if text.is_empty() {
+                    self.show_toast("No text selected");
+                } else {
+                    match super::clipboard::copy(&text) {
+                        Ok(()) => {
+                            self.show_toast("Copied to clipboard");
+                        }
+                        Err(e) => {
+                            self.show_toast(format!("Failed to copy: {}", e));
+                        }
+                    }
+                }
+            }
+            // Clear selection after copy
+            self.text_selection = None;
+        }
+    }
+
+    /// Extracts the selected text from the chat panel based on screen coordinates.
+    fn get_selected_text(&self, selection: &TextSelection) -> Option<String> {
+        // Get the chat area bounds
+        let area = self.chat_area?;
+
+        // Normalize selection (start should be before end)
+        let (start, end) = if selection.start.0 < selection.end.0
+            || (selection.start.0 == selection.end.0 && selection.start.1 <= selection.end.1)
+        {
+            (selection.start, selection.end)
+        } else {
+            (selection.end, selection.start)
+        };
+
+        // Convert screen coordinates to content coordinates (relative to chat area)
+        let start_row = start.0.saturating_sub(area.y) as usize;
+        let start_col = start.1.saturating_sub(area.x) as usize;
+        let end_row = end.0.saturating_sub(area.y) as usize;
+        let end_col = end.1.saturating_sub(area.x) as usize;
+
+        // Render messages to get the actual text content
+        let available_width = area.width.saturating_sub(2) as usize; // Account for borders
+        let lines = self.render_chat_lines(available_width);
+
+        // Calculate visible range based on scroll
+        let available_height = area.height.saturating_sub(2) as usize; // Account for borders
+        let total_lines = lines.len();
+        let max_scroll = total_lines.saturating_sub(available_height);
+        let clamped_scroll = self.chat_scroll.min(max_scroll);
+        let visible_start = max_scroll.saturating_sub(clamped_scroll);
+
+        // Extract text from the visible lines
+        let mut selected_text = String::new();
+        for (i, line) in lines
+            .iter()
+            .skip(visible_start)
+            .take(available_height)
+            .enumerate()
+        {
+            // Adjust for border (1 row offset)
+            let line_row = i + 1;
+
+            if line_row >= start_row && line_row <= end_row {
+                // This line is part of the selection
+                let line_start = if line_row == start_row {
+                    start_col.saturating_sub(1) // Account for border
+                } else {
+                    0
+                };
+                let line_end = if line_row == end_row {
+                    end_col.saturating_sub(1) // Account for border
+                } else {
+                    line.len()
+                };
+
+                if line_start < line.len() {
+                    let end_idx = line_end.min(line.len());
+                    if line_start < end_idx {
+                        selected_text.push_str(&line[line_start..end_idx]);
+                    }
+                }
+
+                // Add newline between lines (but not after the last line)
+                if line_row < end_row {
+                    selected_text.push('\n');
+                }
+            }
+        }
+
+        Some(selected_text)
+    }
+
+    /// Renders chat messages to plain text lines for selection purposes.
+    fn render_chat_lines(&self, _available_width: usize) -> Vec<String> {
+        let mut lines = Vec::new();
+
+        for message in &self.messages {
+            if !lines.is_empty() {
+                lines.push(String::new());
+            }
+
+            match message {
+                ChatMessage::User(text) => {
+                    lines.push("You:".to_string());
+                    for line in text.lines() {
+                        lines.push(format!("  {}", line));
+                    }
+                }
+                ChatMessage::Assistant(text) => {
+                    lines.push("Glance:".to_string());
+                    for line in text.lines() {
+                        lines.push(format!("  {}", line));
+                    }
+                }
+                ChatMessage::Result(result) => {
+                    // Simplified: just show column names and row data
+                    let header: Vec<_> = result.columns.iter().map(|c| c.name.as_str()).collect();
+                    lines.push(header.join("\t"));
+                    for row in &result.rows {
+                        let row_text: Vec<_> = row.iter().map(|v| v.to_string()).collect();
+                        lines.push(row_text.join("\t"));
+                    }
+                }
+                ChatMessage::Error(text) => {
+                    lines.push("Error:".to_string());
+                    for line in text.lines() {
+                        lines.push(format!("  {}", line));
+                    }
+                }
+                ChatMessage::System(text) => {
+                    for line in text.lines() {
+                        lines.push(line.to_string());
+                    }
+                }
+            }
+        }
+
+        lines
     }
 
     /// Loads the last executed SQL into the input field for editing.

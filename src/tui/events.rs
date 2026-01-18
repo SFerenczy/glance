@@ -3,7 +3,7 @@
 //! Processes keyboard and terminal events using crossterm.
 
 use crate::error::{GlanceError, Result};
-use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
+use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, MouseEvent};
 use std::time::Duration;
 
 /// Application events.
@@ -11,6 +11,8 @@ use std::time::Duration;
 pub enum Event {
     /// A key was pressed.
     Key(KeyEvent),
+    /// A mouse event occurred.
+    Mouse(MouseEvent),
     /// The terminal was resized.
     Resize(u16, u16),
     /// A periodic tick (for animations/updates).
@@ -49,6 +51,7 @@ impl EventHandler {
 
             match event {
                 CrosstermEvent::Key(key) => Ok(Some(Event::Key(key))),
+                CrosstermEvent::Mouse(mouse) => Ok(Some(Event::Mouse(mouse))),
                 CrosstermEvent::Resize(width, height) => Ok(Some(Event::Resize(width, height))),
                 _ => Ok(Some(Event::Tick)),
             }

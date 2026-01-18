@@ -134,7 +134,7 @@ impl Tui {
         while app_state.running {
             // Draw the UI
             self.terminal
-                .draw(|frame| ui::render(frame, &app_state))
+                .draw(|frame| ui::render(frame, &mut app_state))
                 .map_err(|e| GlanceError::internal(format!("Failed to draw: {e}")))?;
 
             // Handle events
@@ -241,7 +241,7 @@ impl Tui {
 
             // Draw the UI
             self.terminal
-                .draw(|frame| ui::render(frame, app_state))
+                .draw(|frame| ui::render(frame, &mut *app_state))
                 .map_err(|e| GlanceError::internal(format!("Failed to draw: {e}")))?;
 
             if !app_state.running || self.is_shutdown() {
@@ -329,7 +329,13 @@ impl Tui {
                 // Handle global shortcuts
                 match key.code {
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app_state.running = false;
+                        // Copy selection if present, otherwise exit
+                        if app_state.text_selection.is_some() {
+                            let our_event = Event::Key(key);
+                            app_state.handle_event(our_event);
+                        } else {
+                            app_state.running = false;
+                        }
                         return;
                     }
                     KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -392,6 +398,9 @@ impl Tui {
                         app_state.is_processing = false;
                     }
                 }
+            }
+            CEvent::Mouse(mouse) => {
+                app_state.handle_event(Event::Mouse(mouse));
             }
             CEvent::Resize(w, h) => {
                 app_state.handle_event(Event::Resize(w, h));
