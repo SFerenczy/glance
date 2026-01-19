@@ -2,7 +2,7 @@
 //!
 //! Displays the query log with executed SQL queries.
 
-use crate::tui::app::{QueryLogEntry, QueryStatus};
+use crate::tui::app::{QueryLogEntry, QuerySource, QueryStatus};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -38,6 +38,15 @@ impl<'a> Sidebar<'a> {
         }
     }
 
+    /// Returns a source indicator character.
+    fn source_indicator(source: QuerySource) -> &'static str {
+        match source {
+            QuerySource::Manual => "⌨",    // Keyboard icon for manual
+            QuerySource::Generated => "✎", // Pencil for LLM-generated (confirmed)
+            QuerySource::Auto => "⚡",     // Lightning for auto-executed
+        }
+    }
+
     /// Creates a list item for a query entry.
     fn make_list_item(entry: &QueryLogEntry, width: usize) -> ListItem<'static> {
         // Calculate available width for SQL preview
@@ -48,6 +57,16 @@ impl<'a> Sidebar<'a> {
             QueryStatus::Success => Span::styled("✓ ", Style::default().fg(Color::Green)),
             QueryStatus::Error => Span::styled("✗ ", Style::default().fg(Color::Red)),
         };
+
+        // Source indicator with color
+        let source_icon = Span::styled(
+            format!("{} ", Self::source_indicator(entry.source)),
+            Style::default().fg(match entry.source {
+                QuerySource::Manual => Color::Blue,
+                QuerySource::Generated => Color::Yellow,
+                QuerySource::Auto => Color::Magenta,
+            }),
+        );
 
         let sql_preview = entry.sql_preview(preview_width);
         let sql_span = Span::styled(
@@ -72,7 +91,7 @@ impl<'a> Sidebar<'a> {
 
         ListItem::new(vec![
             Line::from(vec![sql_span]),
-            Line::from(vec![Span::raw("  "), status_icon, info_span]),
+            Line::from(vec![Span::raw("  "), source_icon, status_icon, info_span]),
         ])
     }
 }

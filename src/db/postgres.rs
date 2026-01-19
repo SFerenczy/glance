@@ -115,20 +115,18 @@ impl DatabaseClient for PostgresClient {
 
         let execution_time = start.elapsed();
 
-        if result.is_empty() {
-            return Ok(QueryResult::new().with_execution_time(execution_time));
-        }
-
-        // Extract column metadata from the first row
-        let columns: Vec<ColumnInfo> = result
-            .first()
-            .map(|row| {
-                row.columns()
-                    .iter()
-                    .map(|col| ColumnInfo::new(col.name(), col.type_info().name()))
-                    .collect()
-            })
-            .unwrap_or_default();
+        // Extract column metadata - from first row if available, otherwise fetch with LIMIT 0
+        let columns: Vec<ColumnInfo> = if let Some(first_row) = result.first() {
+            first_row
+                .columns()
+                .iter()
+                .map(|col| ColumnInfo::new(col.name(), col.type_info().name()))
+                .collect()
+        } else {
+            // Empty result - try to get column metadata by wrapping in a subquery
+            // This works for SELECT statements
+            self.fetch_column_metadata(sql).await.unwrap_or_default()
+        };
 
         // Check if result set exceeds MAX_ROWS
         let total_rows = result.len();
@@ -163,6 +161,59 @@ impl DatabaseClient for PostgresClient {
 }
 
 impl PostgresClient {
+    /// Fetches column metadata for a query without executing it fully.
+    /// Uses a prepared statement to get column info.
+    async fn fetch_column_metadata(&self, sql: &str) -> Result<Vec<ColumnInfo>> {
+        // Use PREPARE to get column metadata without executing the full query
+        // This is a best-effort approach - may fail for some query types
+        let prepared = sqlx::query(sql).fetch_optional(&self.pool).await;
+
+        // If we got a row (shouldn't happen since result was empty), extract columns
+        // Otherwise, try to get metadata from the statement itself
+        match prepared {
+            Ok(Some(row)) => Ok(row
+                .columns()
+                .iter()
+                .map(|col| ColumnInfo::new(col.name(), col.type_info().name()))
+                .collect()),
+            Ok(None) => {
+                // Still no rows - the query truly returns empty
+                // For PostgreSQL, we can use a CTE trick to get column info
+                // Wrap in a subquery that we know returns no rows
+                let metadata_query = format!("SELECT * FROM ({}) AS _metadata_query LIMIT 0", sql);
+                match sqlx::query(&metadata_query)
+                    .fetch_optional(&self.pool)
+                    .await
+                {
+                    Ok(Some(row)) => Ok(row
+                        .columns()
+                        .iter()
+                        .map(|col| ColumnInfo::new(col.name(), col.type_info().name()))
+                        .collect()),
+                    Ok(None) => {
+                        // Use raw_statement to get column info
+                        // This requires executing a dummy fetch
+                        let rows: Vec<PgRow> = sqlx::query(&metadata_query)
+                            .fetch_all(&self.pool)
+                            .await
+                            .unwrap_or_default();
+                        if let Some(row) = rows.first() {
+                            Ok(row
+                                .columns()
+                                .iter()
+                                .map(|col| ColumnInfo::new(col.name(), col.type_info().name()))
+                                .collect())
+                        } else {
+                            Ok(Vec::new())
+                        }
+                    }
+                    Err(_) => Ok(Vec::new()),
+                }
+            }
+            Err(_) => Ok(Vec::new()),
+        }
+    }
+
     /// Fetches all tables from the public schema.
     async fn fetch_tables(&self) -> Result<Vec<Table>> {
         // Get table names

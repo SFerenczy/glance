@@ -4,7 +4,9 @@
 //! foreign keys, and indexes.
 
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write;
+use std::hash::{Hash, Hasher};
 
 /// Represents the complete schema of a database.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -130,6 +132,33 @@ impl Schema {
     /// Formats the schema for display in the TUI.
     pub fn format_for_display(&self) -> String {
         self.format_for_llm()
+    }
+
+    /// Computes a hash of the schema content for cache invalidation.
+    pub fn content_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        // Hash table count and names
+        self.tables.len().hash(&mut hasher);
+        for table in &self.tables {
+            table.name.hash(&mut hasher);
+            table.columns.len().hash(&mut hasher);
+            for col in &table.columns {
+                col.name.hash(&mut hasher);
+                col.data_type.hash(&mut hasher);
+                col.is_nullable.hash(&mut hasher);
+                col.default.hash(&mut hasher);
+            }
+            table.primary_key.hash(&mut hasher);
+        }
+        // Hash foreign keys
+        self.foreign_keys.len().hash(&mut hasher);
+        for fk in &self.foreign_keys {
+            fk.from_table.hash(&mut hasher);
+            fk.from_columns.hash(&mut hasher);
+            fk.to_table.hash(&mut hasher);
+            fk.to_columns.hash(&mut hasher);
+        }
+        hasher.finish()
     }
 }
 

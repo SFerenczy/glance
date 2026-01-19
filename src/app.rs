@@ -10,16 +10,16 @@ use crate::config::ConnectionConfig;
 use crate::db::{DatabaseClient, PostgresClient, QueryResult, Schema};
 use crate::error::{GlanceError, Result};
 use crate::llm::{
-    build_messages, format_saved_queries_for_llm, get_tool_definitions, parse_llm_response,
+    build_messages_cached, format_saved_queries_for_llm, get_tool_definitions, parse_llm_response,
     Conversation, ListSavedQueriesInput, LlmClient, LlmProvider, LlmResponse, MockLlmClient,
-    ToolResult,
+    PromptCache, ToolResult,
 };
 use crate::persistence::{
     self, ConnectionProfile, HistoryFilter, QueryStatus, SavedQueryFilter, SecretStorageStatus,
     StateDb, SubmittedBy,
 };
 use crate::safety::{classify_sql, ClassificationResult, SafetyLevel};
-use crate::tui::app::{ChatMessage, QueryLogEntry};
+use crate::tui::app::{ChatMessage, QueryLogEntry, QuerySource};
 
 /// Help text displayed for the /help command.
 const HELP_TEXT: &str = r#"Available commands:
@@ -101,6 +101,8 @@ pub struct Orchestrator {
     current_connection_name: Option<String>,
     /// Last executed SQL (for /savequery).
     last_executed_sql: Option<String>,
+    /// Cache for formatted schema prompts.
+    prompt_cache: PromptCache,
 }
 
 impl Orchestrator {
@@ -119,6 +121,7 @@ impl Orchestrator {
             state_db: None,
             current_connection_name: None,
             last_executed_sql: None,
+            prompt_cache: PromptCache::new(),
         }
     }
 
@@ -206,6 +209,7 @@ impl Orchestrator {
             state_db,
             current_connection_name: None,
             last_executed_sql: None,
+            prompt_cache: PromptCache::new(),
         })
     }
 
@@ -220,6 +224,7 @@ impl Orchestrator {
             current_connection_name: None,
             last_executed_sql: None,
             conversation: Conversation::new(),
+            prompt_cache: PromptCache::new(),
         }
     }
 
@@ -238,6 +243,7 @@ impl Orchestrator {
             current_connection_name: Some("test".to_string()),
             last_executed_sql: None,
             conversation: Conversation::new(),
+            prompt_cache: PromptCache::new(),
         }
     }
 
@@ -261,6 +267,7 @@ impl Orchestrator {
             current_connection_name: Some("test".to_string()),
             last_executed_sql: None,
             conversation: Conversation::new(),
+            prompt_cache: PromptCache::new(),
         }
     }
 
@@ -349,8 +356,9 @@ impl Orchestrator {
         // Add user message to conversation
         self.conversation.add_user(input);
 
-        // Build messages for LLM
-        let messages = build_messages(&self.schema, &self.conversation);
+        // Build messages for LLM using cached schema prompt
+        let messages =
+            build_messages_cached(&mut self.prompt_cache, &self.schema, &self.conversation);
 
         // Get tool definitions
         let tools = get_tool_definitions();
@@ -377,9 +385,12 @@ impl Orchestrator {
             result_messages.push(ChatMessage::Assistant(parsed.text));
         }
 
-        // If SQL was found, handle it
+        // If SQL was found, handle it (mark as Generated since it came from LLM)
         if let Some(sql) = parsed.sql {
-            match self.handle_sql(&sql).await? {
+            match self
+                .handle_sql_with_source(&sql, QuerySource::Generated)
+                .await?
+            {
                 InputResult::Messages(msgs, entry) => {
                     result_messages.extend(msgs);
                     log_entry = entry;
@@ -402,7 +413,7 @@ impl Orchestrator {
 
     /// Handles tool calls from the LLM and returns the final response.
     async fn handle_tool_calls(
-        &self,
+        &mut self,
         response: LlmResponse,
         tools: &[crate::llm::ToolDefinition],
     ) -> Result<LlmResponse> {
@@ -419,7 +430,8 @@ impl Orchestrator {
         }
 
         // Build messages (without the tool call response - that's added by the client)
-        let messages = build_messages(&self.schema, &self.conversation);
+        let messages =
+            build_messages_cached(&mut self.prompt_cache, &self.schema, &self.conversation);
 
         // Continue the conversation with tool results
         self.llm
@@ -487,13 +499,30 @@ impl Orchestrator {
 
     /// Handles SQL execution with safety classification.
     async fn handle_sql(&mut self, sql: &str) -> Result<InputResult> {
+        self.handle_sql_with_source(sql, QuerySource::Manual).await
+    }
+
+    /// Handles SQL execution with safety classification and a specific source.
+    async fn handle_sql_with_source(
+        &mut self,
+        sql: &str,
+        source: QuerySource,
+    ) -> Result<InputResult> {
         // Classify the SQL
         let classification = classify_sql(sql);
 
         match classification.level {
             SafetyLevel::Safe => {
                 // Auto-execute safe queries
-                let (messages, log_entry) = self.execute_and_format(sql).await;
+                // If source is Manual (from /sql), keep it Manual; otherwise mark as Auto
+                let effective_source = if source == QuerySource::Manual {
+                    QuerySource::Manual
+                } else {
+                    QuerySource::Auto
+                };
+                let (messages, log_entry) = self
+                    .execute_and_format_with_source(sql, effective_source)
+                    .await;
                 Ok(InputResult::Messages(messages, log_entry))
             }
             SafetyLevel::Mutating | SafetyLevel::Destructive => {
@@ -507,15 +536,27 @@ impl Orchestrator {
     }
 
     /// Executes a SQL query and returns formatted messages with a log entry.
+    #[allow(dead_code)]
     pub async fn execute_and_format(
         &mut self,
         sql: &str,
     ) -> (Vec<ChatMessage>, Option<QueryLogEntry>) {
-        match self.execute_query(sql).await {
-            Ok((result, entry)) => {
+        self.execute_and_format_with_source(sql, QuerySource::Manual)
+            .await
+    }
+
+    /// Executes a SQL query with a specific source and returns formatted messages with a log entry.
+    pub async fn execute_and_format_with_source(
+        &mut self,
+        sql: &str,
+        source: QuerySource,
+    ) -> (Vec<ChatMessage>, Option<QueryLogEntry>) {
+        let (result, entry) = self.execute_query_with_source(sql, source).await;
+        match result {
+            Ok(query_result) => {
                 let messages = vec![
                     ChatMessage::System(format!("Query executed in {:?}", entry.execution_time)),
-                    ChatMessage::Result(result),
+                    ChatMessage::Result(query_result),
                 ];
                 (messages, Some(entry))
             }
@@ -524,17 +565,33 @@ impl Orchestrator {
                     "Error executing query:\n  {}",
                     e
                 ))],
-                None,
+                Some(entry), // Always return the log entry, even for errors
             ),
         }
     }
 
     /// Executes a SQL query and returns the result with a log entry.
-    pub async fn execute_query(&mut self, sql: &str) -> Result<(QueryResult, QueryLogEntry)> {
-        let db = self
-            .db
-            .as_ref()
-            .ok_or_else(|| GlanceError::connection("No database connection available"))?;
+    /// Always returns a log entry, even on error.
+    pub async fn execute_query_with_source(
+        &mut self,
+        sql: &str,
+        source: QuerySource,
+    ) -> (Result<QueryResult>, QueryLogEntry) {
+        let db = match self.db.as_ref() {
+            Some(db) => db,
+            None => {
+                let entry = QueryLogEntry::error_with_source(
+                    sql.to_string(),
+                    std::time::Duration::ZERO,
+                    "No database connection available".to_string(),
+                    source,
+                );
+                return (
+                    Err(GlanceError::connection("No database connection available")),
+                    entry,
+                );
+            }
+        };
 
         let start = Instant::now();
         let result = db.execute_query(sql).await;
@@ -563,25 +620,28 @@ impl Orchestrator {
             .await;
         }
 
-        match result {
-            Ok(query_result) => {
-                let row_count = query_result.row_count;
-                let entry = QueryLogEntry::success(sql.to_string(), execution_time, row_count);
-                Ok((query_result, entry))
-            }
-            Err(e) => {
-                let _entry = QueryLogEntry::error(sql.to_string(), execution_time, e.to_string());
-                Err(GlanceError::query(format!(
-                    "{}\n\nQuery log entry created with error status.",
-                    e
-                )))
-            }
-        }
+        let entry = match &result {
+            Ok(query_result) => QueryLogEntry::success_with_source(
+                sql.to_string(),
+                execution_time,
+                query_result.row_count,
+                source,
+            ),
+            Err(e) => QueryLogEntry::error_with_source(
+                sql.to_string(),
+                execution_time,
+                e.to_string(),
+                source,
+            ),
+        };
+
+        (result.map_err(|e| GlanceError::query(e.to_string())), entry)
     }
 
-    /// Confirms and executes a pending query.
+    /// Confirms and executes a pending query (user-confirmed LLM-generated query).
     pub async fn confirm_query(&mut self, sql: &str) -> (Vec<ChatMessage>, Option<QueryLogEntry>) {
-        self.execute_and_format(sql).await
+        self.execute_and_format_with_source(sql, QuerySource::Generated)
+            .await
     }
 
     /// Cancels a pending query.

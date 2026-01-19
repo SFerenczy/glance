@@ -4,6 +4,7 @@
 
 use crate::db::Schema;
 use crate::llm::types::{Conversation, Message};
+use std::sync::Arc;
 
 /// System prompt template for the SQL assistant.
 const SYSTEM_PROMPT_TEMPLATE: &str = r#"You are a SQL assistant for a PostgreSQL database. Generate SQL queries based on user questions.
@@ -42,6 +43,59 @@ pub fn build_messages(schema: &Schema, conversation: &Conversation) -> Vec<Messa
     messages.extend(conversation.messages().iter().cloned());
 
     messages
+}
+
+/// Builds messages using a cached system prompt.
+pub fn build_messages_cached(
+    cache: &mut PromptCache,
+    schema: &Schema,
+    conversation: &Conversation,
+) -> Vec<Message> {
+    let mut messages = Vec::with_capacity(conversation.len() + 1);
+
+    // Get cached system prompt
+    let system_prompt = cache.get_or_build(schema);
+    messages.push(Message::system(system_prompt.to_string()));
+
+    // Add conversation history
+    messages.extend(conversation.messages().iter().cloned());
+
+    messages
+}
+
+/// Cache for formatted schema prompts.
+///
+/// Avoids rebuilding the system prompt on every LLM request when the schema
+/// hasn't changed.
+#[derive(Debug, Default)]
+pub struct PromptCache {
+    /// Hash of the schema used to build the cached prompt.
+    schema_hash: u64,
+    /// Cached system prompt.
+    system_prompt: Option<Arc<str>>,
+}
+
+impl PromptCache {
+    /// Creates a new empty prompt cache.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Gets the cached system prompt, rebuilding if the schema has changed.
+    pub fn get_or_build(&mut self, schema: &Schema) -> Arc<str> {
+        let hash = schema.content_hash();
+        if self.schema_hash != hash || self.system_prompt.is_none() {
+            self.schema_hash = hash;
+            self.system_prompt = Some(Arc::from(build_system_prompt(schema)));
+        }
+        Arc::clone(self.system_prompt.as_ref().unwrap())
+    }
+
+    /// Invalidates the cache, forcing a rebuild on next access.
+    pub fn invalidate(&mut self) {
+        self.schema_hash = 0;
+        self.system_prompt = None;
+    }
 }
 
 #[cfg(test)]

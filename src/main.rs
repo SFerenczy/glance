@@ -71,12 +71,19 @@ async fn run() -> Result<()> {
         Some(ref conn) => {
             info!("Connection: {}", conn.display_string());
 
-            // Determine LLM provider from config
-            let llm_provider = config
-                .llm
-                .provider
-                .parse::<LlmProvider>()
-                .unwrap_or(LlmProvider::OpenAi);
+            // Validate and parse LLM provider from config
+            let llm_provider = if config.llm.provider.is_empty() {
+                LlmProvider::OpenAi
+            } else {
+                config.llm.provider.parse::<LlmProvider>().map_err(|_| {
+                    GlanceError::config(format!(
+                        "Invalid LLM provider '{}'. Valid options: openai, anthropic, ollama\n\n\
+                         Check your configuration file at {}",
+                        config.llm.provider,
+                        config_path.display()
+                    ))
+                })?
+            };
 
             // Run with full orchestrator integration
             tui::run_async(conn, llm_provider).await?;

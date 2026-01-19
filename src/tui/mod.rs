@@ -41,6 +41,28 @@ pub enum AsyncMessage {
     InputResult(Result<InputResult>),
     /// Query execution completed.
     QueryResult(Vec<app::ChatMessage>, Option<app::QueryLogEntry>),
+    /// Progress update from background operation.
+    Progress(ProgressMessage),
+}
+
+/// Progress messages from background operations.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum ProgressMessage {
+    /// LLM request started.
+    LlmStarted,
+    /// LLM streaming token received.
+    LlmStreaming(String),
+    /// LLM request completed.
+    LlmComplete(String),
+    /// Database query started.
+    DbStarted,
+    /// Database query completed.
+    DbComplete,
+    /// Operation encountered an error.
+    Error(String),
+    /// Operation was cancelled.
+    Cancelled,
 }
 
 /// The main TUI application runner.
@@ -499,6 +521,41 @@ impl Tui {
                 }
                 if let Some(e) = entry {
                     app_state.add_query_log(e);
+                }
+            }
+            AsyncMessage::Progress(progress) => {
+                use crate::tui::widgets::spinner::Spinner;
+                match progress {
+                    ProgressMessage::LlmStarted => {
+                        app_state.spinner = Some(Spinner::thinking());
+                    }
+                    ProgressMessage::LlmStreaming(_token) => {
+                        // Future: could display streaming tokens
+                        if app_state.spinner.is_none() {
+                            app_state.spinner = Some(Spinner::thinking());
+                        }
+                    }
+                    ProgressMessage::LlmComplete(_) => {
+                        app_state.spinner = None;
+                    }
+                    ProgressMessage::DbStarted => {
+                        app_state.spinner = Some(Spinner::executing());
+                    }
+                    ProgressMessage::DbComplete => {
+                        app_state.spinner = None;
+                    }
+                    ProgressMessage::Error(msg) => {
+                        app_state.is_processing = false;
+                        app_state.spinner = None;
+                        app_state.add_message(app::ChatMessage::Error(msg));
+                    }
+                    ProgressMessage::Cancelled => {
+                        app_state.is_processing = false;
+                        app_state.spinner = None;
+                        app_state.add_message(app::ChatMessage::System(
+                            "Operation cancelled.".to_string(),
+                        ));
+                    }
                 }
             }
         }

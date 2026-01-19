@@ -102,9 +102,17 @@ impl<'a> ResultTable<'a> {
         // Header separator
         lines.push(self.render_border(&adjusted_widths, '├', '┼', '┤'));
 
-        // Data rows with row numbers
-        for (row_num, row) in self.result.rows.iter().enumerate() {
-            lines.push(self.render_data_row(row_num + 1, row, &adjusted_widths));
+        // Data rows with row numbers, or "No results" message if empty
+        if self.result.rows.is_empty() {
+            // Show "No results" message spanning the table
+            lines.push(Line::from(Span::styled(
+                "    │ (no results)",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            for (row_num, row) in self.result.rows.iter().enumerate() {
+                lines.push(self.render_data_row(row_num + 1, row, &adjusted_widths));
+            }
         }
 
         // Bottom border
