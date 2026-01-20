@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::config::ConnectionConfig;
-use crate::db::{DatabaseClient, PostgresClient, Schema};
+use crate::db::{DatabaseClient, Schema};
 use crate::error::Result;
 use crate::persistence::{self, StateDb};
 
@@ -50,18 +50,14 @@ impl ConnectionManager {
 
     /// Connect to a database using the given configuration.
     pub async fn connect(&mut self, config: &ConnectionConfig, name: Option<String>) -> Result<()> {
-        let db = PostgresClient::connect(config).await?;
+        let db = crate::db::connect(config).await?;
         let schema = db.introspect_schema().await?;
 
         if let Some(old) = self.active.take() {
             let _ = old.db.close().await;
         }
 
-        self.active = Some(ActiveConnection {
-            name,
-            db: Box::new(db),
-            schema,
-        });
+        self.active = Some(ActiveConnection { name, db, schema });
 
         Ok(())
     }
@@ -87,6 +83,7 @@ impl ConnectionManager {
         .await?;
 
         let config = ConnectionConfig {
+            backend: profile.backend,
             host: profile.host.clone(),
             port: profile.port,
             database: Some(profile.database.clone()),
@@ -96,7 +93,7 @@ impl ConnectionManager {
             extras: profile.extras.clone(),
         };
 
-        let db = PostgresClient::connect(&config).await?;
+        let db = crate::db::connect(&config).await?;
         let schema = db.introspect_schema().await?;
 
         if let Some(old) = self.active.take() {
@@ -105,7 +102,7 @@ impl ConnectionManager {
 
         self.active = Some(ActiveConnection {
             name: Some(name.to_string()),
-            db: Box::new(db),
+            db,
             schema: schema.clone(),
         });
 

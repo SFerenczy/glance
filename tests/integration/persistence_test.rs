@@ -1,5 +1,6 @@
 //! Integration tests for the persistence layer.
 
+use db_glance::db::DatabaseBackend;
 use db_glance::persistence::{
     self, ConnectionProfile, HistoryFilter, QueryStatus, SavedQueryFilter, StateDb, SubmittedBy,
 };
@@ -27,6 +28,7 @@ async fn test_connection_crud() {
 
     let profile = ConnectionProfile {
         name: "test_conn".to_string(),
+        backend: DatabaseBackend::default(),
         database: "testdb".to_string(),
         host: Some("localhost".to_string()),
         port: 5432,
@@ -73,6 +75,7 @@ async fn test_query_history() {
 
     let profile = ConnectionProfile {
         name: "hist_conn".to_string(),
+        backend: DatabaseBackend::default(),
         database: "histdb".to_string(),
         host: None,
         port: 5432,
@@ -134,6 +137,7 @@ async fn test_saved_queries_with_tags() {
 
     let profile = ConnectionProfile {
         name: "sq_conn".to_string(),
+        backend: DatabaseBackend::default(),
         database: "sqdb".to_string(),
         host: None,
         port: 5432,
@@ -247,6 +251,7 @@ async fn test_duplicate_connection_rejected() {
 
     let profile = ConnectionProfile {
         name: "dup_conn".to_string(),
+        backend: DatabaseBackend::default(),
         database: "dupdb".to_string(),
         host: None,
         port: 5432,

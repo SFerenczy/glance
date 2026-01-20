@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::{CommandContext, CommandResult};
 use crate::commands::router::{ConnectionAddArgs, ConnectionEditArgs};
 use crate::config::ConnectionConfig;
-use crate::db::{DatabaseClient, PostgresClient, Schema};
+use crate::db::{DatabaseBackend, DatabaseClient, Schema};
 use crate::persistence::{self, ConnectionProfile, StateDb};
 
 /// Handle /connections command - list saved connections.
@@ -76,6 +76,7 @@ pub async fn handle_connect(
     };
 
     let config = ConnectionConfig {
+        backend: profile.backend,
         host: profile.host.clone(),
         port: profile.port,
         database: Some(profile.database.clone()),
@@ -94,7 +95,7 @@ pub async fn handle_connect(
         config.password.is_some()
     );
 
-    let db = match PostgresClient::connect(&config).await {
+    let db = match crate::db::connect(&config).await {
         Ok(db) => db,
         Err(e) => {
             return Err(CommandResult::error(format!("Failed to connect: {}", e)));
@@ -116,7 +117,7 @@ pub async fn handle_connect(
     }
 
     Ok(ConnectResult {
-        db: Box::new(db),
+        db,
         schema,
         name: name.to_string(),
         database: profile.database,
@@ -154,6 +155,7 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
 
     if args.test {
         let test_config = ConnectionConfig {
+            backend: DatabaseBackend::default(),
             host: args.host.clone(),
             port: args.port,
             database: args.database.clone(),
@@ -163,7 +165,7 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
             extras: None,
         };
 
-        match PostgresClient::connect(&test_config).await {
+        match crate::db::connect(&test_config).await {
             Ok(db) => {
                 let _ = db.close().await;
             }
@@ -178,6 +180,7 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
 
     let profile = ConnectionProfile {
         name: args.name.clone(),
+        backend: DatabaseBackend::default(),
         database: db_name,
         host: args.host.clone(),
         port: args.port,
@@ -247,6 +250,7 @@ pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>
 
     let updated_profile = ConnectionProfile {
         name: args.name.clone(),
+        backend: existing.backend,
         database: args.database.clone().unwrap_or(existing.database),
         host: args.host.clone().or(existing.host),
         port: args.port.unwrap_or(existing.port),

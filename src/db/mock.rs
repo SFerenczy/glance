@@ -3,7 +3,6 @@
 //! Provides an in-memory database implementation for headless testing.
 
 use super::{ColumnInfo, DatabaseClient, QueryResult, Schema, Value};
-use crate::config::ConnectionConfig;
 use crate::error::Result;
 use async_trait::async_trait;
 use std::time::Duration;
@@ -36,13 +35,6 @@ impl Default for MockDatabaseClient {
 
 #[async_trait]
 impl DatabaseClient for MockDatabaseClient {
-    async fn connect(_config: &ConnectionConfig) -> Result<Self>
-    where
-        Self: Sized,
-    {
-        Ok(Self::new())
-    }
-
     async fn introspect_schema(&self) -> Result<Schema> {
         Ok(self.schema.clone())
     }

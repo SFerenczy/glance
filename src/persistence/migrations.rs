@@ -6,7 +6,7 @@ use crate::error::{GlanceError, Result};
 use sqlx::sqlite::SqlitePool;
 use tracing::info;
 
-const CURRENT_VERSION: i32 = 1;
+const CURRENT_VERSION: i32 = 2;
 
 /// Runs all pending migrations on the database.
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
@@ -78,6 +78,7 @@ async fn record_version(pool: &SqlitePool, version: i32) -> Result<()> {
 async fn run_migration(pool: &SqlitePool, version: i32) -> Result<()> {
     match version {
         1 => migration_v1(pool).await,
+        2 => migration_v2(pool).await,
         _ => Err(GlanceError::persistence(format!(
             "Unknown migration version: {version}"
         ))),
@@ -232,6 +233,20 @@ async fn migration_v1(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await
     .map_err(|e| GlanceError::persistence(format!("Failed to initialize llm_settings: {e}")))?;
+
+    Ok(())
+}
+
+/// Migration v2: Add backend column to connections table.
+async fn migration_v2(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(
+        r#"
+        ALTER TABLE connections ADD COLUMN backend TEXT NOT NULL DEFAULT 'postgres'
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| GlanceError::persistence(format!("Failed to add backend column: {e}")))?;
 
     Ok(())
 }

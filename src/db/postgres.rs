@@ -40,11 +40,9 @@ impl PostgresClient {
     pub fn from_pool(pool: PgPool) -> Self {
         Self { pool }
     }
-}
 
-#[async_trait]
-impl DatabaseClient for PostgresClient {
-    async fn connect(config: &ConnectionConfig) -> Result<Self> {
+    /// Connects to the database using the provided configuration.
+    pub async fn connect(config: &ConnectionConfig) -> Result<Self> {
         let conn_str = config.to_connection_string()?;
 
         let mut last_error = None;
@@ -86,7 +84,10 @@ impl DatabaseClient for PostgresClient {
             config,
         ))
     }
+}
 
+#[async_trait]
+impl DatabaseClient for PostgresClient {
     async fn introspect_schema(&self) -> Result<Schema> {
         let tables = self.fetch_tables().await?;
         let foreign_keys = self.fetch_foreign_keys().await?;
@@ -699,8 +700,7 @@ mod tests {
             database: Some("testdb".to_string()),
             user: Some("testuser".to_string()),
             password: Some("testpass".to_string()),
-            sslmode: None,
-            extras: None,
+            ..Default::default()
         };
 
         let result = PostgresClient::connect(&config).await;

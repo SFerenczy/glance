@@ -4,6 +4,7 @@
 
 #![allow(dead_code)]
 
+use crate::db::DatabaseBackend;
 use crate::error::{GlanceError, Result};
 use crate::persistence::secrets::SecretStorage;
 use serde::{Deserialize, Serialize};
@@ -44,6 +45,7 @@ impl PasswordStorage {
 #[derive(Debug, Clone, FromRow)]
 pub struct ConnectionProfileRow {
     pub name: String,
+    pub backend: String,
     pub database: String,
     pub host: Option<String>,
     pub port: i32,
@@ -61,6 +63,7 @@ pub struct ConnectionProfileRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionProfile {
     pub name: String,
+    pub backend: DatabaseBackend,
     pub database: String,
     pub host: Option<String>,
     pub port: u16,
@@ -78,6 +81,7 @@ impl ConnectionProfile {
     pub fn new(name: String, database: String) -> Self {
         Self {
             name,
+            backend: DatabaseBackend::default(),
             database,
             host: None,
             port: 5432,
@@ -123,8 +127,12 @@ impl From<ConnectionProfileRow> for ConnectionProfile {
             .as_ref()
             .and_then(|s| serde_json::from_str(s).ok());
 
+        // Parse backend, defaulting to Postgres for existing rows without backend
+        let backend = DatabaseBackend::parse(&row.backend).unwrap_or_default();
+
         Self {
             name: row.name,
+            backend,
             database: row.database,
             host: row.host,
             port: row.port as u16,
@@ -143,7 +151,7 @@ impl From<ConnectionProfileRow> for ConnectionProfile {
 pub async fn list_connections(pool: &SqlitePool) -> Result<Vec<ConnectionProfile>> {
     let rows: Vec<ConnectionProfileRow> = sqlx::query_as(
         r#"
-        SELECT name, database, host, port, username, sslmode, extras,
+        SELECT name, COALESCE(backend, 'postgres') as backend, database, host, port, username, sslmode, extras,
                password_storage, password_plaintext, created_at, updated_at, last_used_at
         FROM connections
         ORDER BY name
@@ -160,7 +168,7 @@ pub async fn list_connections(pool: &SqlitePool) -> Result<Vec<ConnectionProfile
 pub async fn get_connection(pool: &SqlitePool, name: &str) -> Result<Option<ConnectionProfile>> {
     let row: Option<ConnectionProfileRow> = sqlx::query_as(
         r#"
-        SELECT name, database, host, port, username, sslmode, extras,
+        SELECT name, COALESCE(backend, 'postgres') as backend, database, host, port, username, sslmode, extras,
                password_storage, password_plaintext, created_at, updated_at, last_used_at
         FROM connections
         WHERE name = ?
@@ -200,12 +208,13 @@ pub async fn create_connection(
 
     sqlx::query(
         r#"
-        INSERT INTO connections (name, database, host, port, username, sslmode, extras,
+        INSERT INTO connections (name, backend, database, host, port, username, sslmode, extras,
                                  password_storage, password_plaintext)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&profile.name)
+    .bind(profile.backend.as_str())
     .bind(&profile.database)
     .bind(&profile.host)
     .bind(profile.port as i32)
@@ -252,11 +261,12 @@ pub async fn update_connection(
         sqlx::query(
             r#"
             UPDATE connections
-            SET database = ?, host = ?, port = ?, username = ?, sslmode = ?, extras = ?,
+            SET backend = ?, database = ?, host = ?, port = ?, username = ?, sslmode = ?, extras = ?,
                 password_storage = ?, password_plaintext = ?, updated_at = datetime('now')
             WHERE name = ?
             "#,
         )
+        .bind(profile.backend.as_str())
         .bind(&profile.database)
         .bind(&profile.host)
         .bind(profile.port as i32)
@@ -274,11 +284,12 @@ pub async fn update_connection(
         sqlx::query(
             r#"
             UPDATE connections
-            SET database = ?, host = ?, port = ?, username = ?, sslmode = ?, extras = ?,
+            SET backend = ?, database = ?, host = ?, port = ?, username = ?, sslmode = ?, extras = ?,
                 updated_at = datetime('now')
             WHERE name = ?
             "#,
         )
+        .bind(profile.backend.as_str())
         .bind(&profile.database)
         .bind(&profile.host)
         .bind(profile.port as i32)

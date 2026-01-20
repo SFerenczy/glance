@@ -19,7 +19,7 @@ use crate::commands::{
     Command, CommandRouter,
 };
 use crate::config::ConnectionConfig;
-use crate::db::{DatabaseClient, PostgresClient, QueryResult, Schema};
+use crate::db::{DatabaseClient, QueryResult, Schema};
 use crate::error::{GlanceError, Result};
 use crate::llm::{
     build_messages_cached, format_saved_queries_for_llm, get_tool_definitions, parse_llm_response,
@@ -163,8 +163,8 @@ impl Orchestrator {
 
     /// Creates an orchestrator by connecting to the database and initializing components.
     pub async fn connect(connection: &ConnectionConfig, llm_provider: LlmProvider) -> Result<Self> {
-        // Connect to database
-        let db = PostgresClient::connect(connection).await?;
+        // Connect to database using the factory
+        let db = crate::db::connect(connection).await?;
 
         // Introspect schema
         let schema = db.introspect_schema().await?;
@@ -176,7 +176,7 @@ impl Orchestrator {
         let llm = Self::create_llm_client(llm_provider, state_db.as_ref()).await?;
 
         Ok(Self {
-            db: Some(Box::new(db)),
+            db: Some(db),
             llm,
             schema,
             conversation: Conversation::new(),
@@ -959,6 +959,7 @@ impl Orchestrator {
         .await?;
 
         let config = ConnectionConfig {
+            backend: profile.backend,
             host: profile.host.clone(),
             port: profile.port,
             database: Some(profile.database.clone()),
@@ -977,7 +978,7 @@ impl Orchestrator {
             config.password.is_some()
         );
 
-        let db = match PostgresClient::connect(&config).await {
+        let db = match crate::db::connect(&config).await {
             Ok(db) => db,
             Err(e) => {
                 return Ok(InputResult::Messages(
@@ -993,7 +994,7 @@ impl Orchestrator {
             let _ = old_db.close().await;
         }
 
-        self.db = Some(Box::new(db));
+        self.db = Some(db);
         self.schema = schema;
         self.conversation.clear();
         self.current_connection_name = Some(args.to_string());

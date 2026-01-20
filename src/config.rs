@@ -3,6 +3,7 @@
 //! Handles loading configuration from TOML files and environment variables,
 //! with support for named database connections and LLM provider settings.
 
+use crate::db::DatabaseBackend;
 use crate::error::{GlanceError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -55,6 +56,10 @@ impl Default for LlmConfig {
 /// Database connection configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConnectionConfig {
+    /// Database backend type.
+    #[serde(default)]
+    pub backend: DatabaseBackend,
+
     /// Database host.
     pub host: Option<String>,
 
@@ -92,15 +97,20 @@ impl ConnectionConfig {
         let url = Url::parse(conn_str)
             .map_err(|e| GlanceError::config(format!("Invalid connection string: {e}")))?;
 
-        if url.scheme() != "postgres" && url.scheme() != "postgresql" {
-            return Err(GlanceError::config(format!(
-                "Invalid scheme '{}'. Expected 'postgres' or 'postgresql'",
-                url.scheme()
-            )));
-        }
+        let backend = match url.scheme() {
+            "postgres" | "postgresql" => DatabaseBackend::Postgres,
+            // Future: "mysql" => DatabaseBackend::MySQL,
+            // Future: "sqlite" => DatabaseBackend::SQLite,
+            other => {
+                return Err(GlanceError::config(format!(
+                    "Unsupported database scheme: {}",
+                    other
+                )))
+            }
+        };
 
         let host = url.host_str().map(String::from);
-        let port = url.port().unwrap_or(5432);
+        let port = url.port().unwrap_or_else(|| backend.default_port());
         let database = url.path().strip_prefix('/').map(String::from);
         let user = if url.username().is_empty() {
             None
@@ -110,6 +120,7 @@ impl ConnectionConfig {
         let password = url.password().map(String::from);
 
         Ok(Self {
+            backend,
             host,
             port,
             database,
@@ -128,7 +139,8 @@ impl ConnectionConfig {
             .as_deref()
             .ok_or_else(|| GlanceError::config("Database name is required"))?;
 
-        let mut conn_str = String::from("postgres://");
+        let scheme = self.backend.url_scheme();
+        let mut conn_str = format!("{}://", scheme);
 
         if let Some(user) = &self.user {
             // URL-encode user and password to handle special characters
@@ -151,7 +163,8 @@ impl ConnectionConfig {
         conn_str.push_str(database);
 
         tracing::debug!(
-            "Generated connection string (password redacted): postgres://{}@{}:{}/{}",
+            "Generated connection string (password redacted): {}://{}@{}:{}/{}",
+            scheme,
             self.user.as_deref().unwrap_or("(none)"),
             host,
             self.port,
@@ -163,6 +176,8 @@ impl ConnectionConfig {
 
     /// Merges another config into this one, with the other taking precedence.
     pub fn merge(&mut self, other: &ConnectionConfig) {
+        // Backend from other always takes precedence if explicitly set
+        self.backend = other.backend;
         if other.host.is_some() {
             self.host = other.host.clone();
         }
@@ -358,7 +373,10 @@ database = "mydb"
     fn test_connection_string_invalid_scheme() {
         let result = ConnectionConfig::from_connection_string("mysql://localhost/mydb");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid scheme"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported database scheme"));
     }
 
     #[test]
@@ -369,8 +387,7 @@ database = "mydb"
             database: Some("mydb".to_string()),
             user: Some("user".to_string()),
             password: Some("pass".to_string()),
-            sslmode: None,
-            extras: None,
+            ..Default::default()
         };
 
         let conn_str = conn.to_connection_string().unwrap();
@@ -383,10 +400,7 @@ database = "mydb"
             host: Some("localhost".to_string()),
             port: 5432,
             database: Some("mydb".to_string()),
-            user: None,
-            password: None,
-            sslmode: None,
-            extras: None,
+            ..Default::default()
         };
 
         let conn_str = conn.to_connection_string().unwrap();
@@ -400,19 +414,14 @@ database = "mydb"
             port: 5432,
             database: Some("mydb".to_string()),
             user: Some("user".to_string()),
-            password: None,
-            sslmode: None,
-            extras: None,
+            ..Default::default()
         };
 
         let override_config = ConnectionConfig {
             host: Some("remote".to_string()),
             port: 5432,
-            database: None,
-            user: None,
             password: Some("secret".to_string()),
-            sslmode: None,
-            extras: None,
+            ..Default::default()
         };
 
         base.merge(&override_config);
@@ -429,10 +438,7 @@ database = "mydb"
             host: Some("localhost".to_string()),
             port: 5432,
             database: Some("mydb".to_string()),
-            user: None,
-            password: None,
-            sslmode: None,
-            extras: None,
+            ..Default::default()
         };
 
         assert_eq!(conn.display_string(), "mydb @ localhost:5432");
