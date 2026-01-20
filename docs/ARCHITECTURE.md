@@ -22,6 +22,55 @@ Glance is a lightweight, LLM-first database companion. It provides a fast, termi
 
 ---
 
+## Architectural Principles
+
+Glance follows a **pragmatic layered architecture** with dependency inversion at key boundaries. This approach provides testability and modularity without the ceremony of full hexagonal/ports-and-adapters.
+
+### Core Principles
+
+1. **Dependency inversion at infrastructure boundaries**
+   - External systems (databases, LLM APIs) are accessed through traits (`dyn DatabaseClient`, `dyn LlmClient`)
+   - Enables mock implementations for testing without real services
+   - Allows swapping providers (OpenAI ↔ Anthropic ↔ Ollama) at runtime
+
+2. **Thin orchestrator, focused components**
+   - The `Orchestrator` coordinates but doesn't implement business logic
+   - Each component has a single responsibility:
+     - `CommandRouter` — parse and dispatch commands
+     - `QueryExecutor` — classify and execute SQL
+     - `LlmService` — prompt building and tool handling
+     - `ConnectionManager` — connection lifecycle
+
+3. **Front-end agnostic core**
+   - TUI, CLI, and headless testing share the same command infrastructure
+   - `InputResult` enum provides a uniform response type for all front-ends
+   - No UI concerns leak into business logic
+
+4. **Explicit over clever**
+   - Pass dependencies explicitly rather than using global state
+   - Prefer composition over inheritance
+   - Avoid magic—code paths should be traceable
+
+### What We Don't Do
+
+- **No formal port interfaces** — Trait objects suffice; we don't need `QueryRepository` abstractions for SQLite persistence that won't change
+- **No dependency injection framework** — Manual wiring is sufficient at this scale
+- **No event sourcing** — Simple state mutations are appropriate for a TUI tool
+
+### Testing Strategy
+
+The architecture enables focused testing at each layer:
+
+| Layer                | Test Type   | Dependencies      |
+| -------------------- | ----------- | ----------------- |
+| Command parsing      | Unit        | None              |
+| Query classification | Unit        | None              |
+| Command handlers     | Integration | Mock DB, Mock LLM |
+| Full orchestrator    | Integration | Mock DB, Mock LLM |
+| TUI behavior         | Headless    | Mock DB, Mock LLM |
+
+---
+
 ## System Architecture
 
 ```
@@ -62,40 +111,89 @@ Glance is a lightweight, LLM-first database companion. It provides a fast, termi
 
 ```
 src/
-├── main.rs              # Entry point, CLI argument parsing
-├── app.rs               # Application state and orchestration
-├── config.rs            # Configuration loading and management
+├── main.rs                   # Entry point, CLI argument parsing
+├── app.rs                    # Thin orchestrator (~300 lines)
+├── config.rs                 # Configuration loading and management
+├── error.rs                  # Error types (thiserror)
 │
-├── tui/
-│   ├── mod.rs           # TUI initialization and main loop
-│   ├── app.rs           # TUI application state
-│   ├── ui.rs            # Layout and rendering
-│   ├── widgets/
-│   │   ├── chat.rs      # Chat panel widget
-│   │   ├── sidebar.rs   # Query log sidebar widget
-│   │   ├── table.rs     # Result table widget
-│   │   └── input.rs     # Input prompt widget
-│   └── events.rs        # Keyboard/mouse event handling
+├── commands/                 # Command parsing and dispatch
+│   ├── mod.rs
+│   ├── router.rs             # Parse input → Command enum
+│   ├── handlers/
+│   │   ├── mod.rs
+│   │   ├── connection.rs     # /connect, /connections, /conn
+│   │   ├── history.rs        # /history
+│   │   ├── llm_settings.rs   # /llm provider|model|key
+│   │   ├── queries.rs        # /savequery, /queries, /usequery
+│   │   └── system.rs         # /help, /clear, /schema, /quit
+│   └── help.rs               # Help text constants
 │
-├── llm/
-│   ├── mod.rs           # LLM client trait and factory
-│   ├── openai.rs        # OpenAI implementation
-│   ├── anthropic.rs     # Anthropic implementation
-│   ├── prompt.rs        # System prompts and prompt construction
-│   └── types.rs         # Message types, responses
+├── connection/               # Connection lifecycle management
+│   ├── mod.rs
+│   └── manager.rs            # Connect, switch, close
 │
-├── db/
-│   ├── mod.rs           # Database client trait and factory
-│   ├── postgres.rs      # Postgres implementation
-│   ├── schema.rs        # Schema introspection types
-│   └── types.rs         # Query results, column types
+├── query/                    # Query execution pipeline
+│   ├── mod.rs
+│   ├── executor.rs           # Classify → execute → format
+│   └── formatter.rs          # Result formatting
 │
-├── safety/
-│   ├── mod.rs           # Query safety classification
-│   └── parser.rs        # SQL statement parsing
+├── session/                  # Chat session state
+│   ├── mod.rs
+│   └── chat.rs               # Conversation, prompt cache
 │
-└── error.rs             # Error types
+├── tui/                      # Terminal UI (ratatui)
+│   ├── mod.rs                # TUI initialization and main loop
+│   ├── app.rs                # TUI application state
+│   ├── ui.rs                 # Layout and rendering
+│   ├── events.rs             # Keyboard/mouse event handling
+│   ├── headless/             # Headless testing support
+│   └── widgets/              # UI components
+│       ├── chat.rs
+│       ├── sidebar.rs
+│       ├── table.rs
+│       └── input.rs
+│
+├── llm/                      # LLM integration
+│   ├── mod.rs                # LlmClient trait
+│   ├── service.rs            # LLM orchestration (prompts, tools)
+│   ├── openai.rs             # OpenAI adapter
+│   ├── anthropic.rs          # Anthropic adapter
+│   ├── ollama.rs             # Ollama adapter
+│   ├── mock.rs               # Mock for testing
+│   ├── prompt.rs             # System prompts
+│   ├── tools.rs              # Tool definitions
+│   └── types.rs              # Message types, responses
+│
+├── db/                       # Database integration
+│   ├── mod.rs                # DatabaseClient trait
+│   ├── postgres.rs           # Postgres adapter
+│   ├── mock.rs               # Mock for testing
+│   └── types.rs              # Schema, QueryResult
+│
+├── persistence/              # Local state (SQLite)
+│   ├── mod.rs                # StateDb wrapper
+│   ├── connections.rs        # Connection profiles
+│   ├── history.rs            # Query history
+│   ├── saved_queries.rs      # Saved queries
+│   ├── llm_settings.rs       # LLM configuration
+│   ├── secrets.rs            # Keyring integration
+│   └── migrations.rs         # Schema migrations
+│
+└── safety/                   # Query safety
+    ├── mod.rs                # Classification API
+    └── parser.rs             # SQL parsing (sqlparser-rs)
 ```
+
+### Component Responsibilities
+
+| Component           | Responsibility                    | Dependencies                    |
+| ------------------- | --------------------------------- | ------------------------------- |
+| `Orchestrator`      | Route input, compose results      | All components                  |
+| `CommandRouter`     | Parse `/commands` into typed enum | None                            |
+| `QueryExecutor`     | Classify SQL, execute, format     | `DatabaseClient`, `safety`      |
+| `LlmService`        | Build prompts, handle tool calls  | `LlmClient`, `persistence`      |
+| `ConnectionManager` | Connection lifecycle              | `DatabaseClient`, `persistence` |
+| `ChatSession`       | Conversation state, prompt cache  | None                            |
 
 ---
 
