@@ -54,6 +54,13 @@ pub enum CommandResult {
         /// Database schema for SQL completions.
         schema: Schema,
     },
+    /// Schema was refreshed successfully.
+    SchemaRefresh {
+        /// Messages to display.
+        messages: Vec<ChatMessage>,
+        /// Updated database schema.
+        schema: Schema,
+    },
     /// No action needed.
     None,
 }

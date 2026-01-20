@@ -57,6 +57,13 @@ pub enum InputResult {
         /// Database schema for SQL completions.
         schema: Schema,
     },
+    /// Schema was refreshed successfully.
+    SchemaRefresh {
+        /// Messages to display.
+        messages: Vec<ChatMessage>,
+        /// Updated database schema.
+        schema: Schema,
+    },
 }
 
 /// The main orchestrator that coordinates all components.
@@ -443,6 +450,9 @@ impl Orchestrator {
                 };
                 llm_settings::handle_llm_settings(&state_db).await
             }
+            Command::RefreshSchema => {
+                return self.handle_refresh_schema().await;
+            }
             Command::NaturalLanguage(_) => {
                 // This shouldn't happen since we check for '/' prefix first
                 return self.handle_natural_language(input).await;
@@ -475,8 +485,38 @@ impl Orchestrator {
                 connection_info,
                 schema,
             },
+            CommandResult::SchemaRefresh { messages, schema } => {
+                InputResult::SchemaRefresh { messages, schema }
+            }
             CommandResult::None => InputResult::None,
         }
+    }
+
+    /// Handles /refresh schema command.
+    async fn handle_refresh_schema(&mut self) -> Result<InputResult> {
+        let db = match &self.db {
+            Some(db) => db,
+            None => {
+                return Ok(InputResult::Messages(
+                    vec![ChatMessage::Error(
+                        "Not connected to a database.".to_string(),
+                    )],
+                    None,
+                ))
+            }
+        };
+
+        let schema = db.introspect_schema().await?;
+        self.schema = schema.clone();
+        self.prompt_cache.invalidate();
+
+        Ok(InputResult::SchemaRefresh {
+            messages: vec![ChatMessage::System(format!(
+                "Schema refreshed. Found {} tables.",
+                schema.tables.len()
+            ))],
+            schema,
+        })
     }
 
     /// Handles /llm provider command with LLM client rebuild.

@@ -347,6 +347,12 @@ impl HeadlessRunner {
                 self.app.is_connected = true;
                 self.app.schema = Some(schema);
             }
+            InputResult::SchemaRefresh { messages, schema } => {
+                for msg in messages {
+                    self.app.add_message(msg);
+                }
+                self.app.schema = Some(schema);
+            }
         }
     }
 

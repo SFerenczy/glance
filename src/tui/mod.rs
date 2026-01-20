@@ -554,6 +554,12 @@ impl Tui {
                         app_state.is_connected = true;
                         app_state.schema = Some(schema);
                     }
+                    Ok(InputResult::SchemaRefresh { messages, schema }) => {
+                        for m in messages {
+                            app_state.add_message(m);
+                        }
+                        app_state.schema = Some(schema);
+                    }
                     Ok(InputResult::None) => {}
                     Err(e) => {
                         app_state.add_message(app::ChatMessage::Error(e.to_string()));

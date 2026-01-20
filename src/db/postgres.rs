@@ -90,8 +90,36 @@ impl PostgresClient {
 #[async_trait]
 impl DatabaseClient for PostgresClient {
     async fn introspect_schema(&self) -> Result<Schema> {
-        let tables = self.fetch_tables().await?;
-        let foreign_keys = self.fetch_foreign_keys().await?;
+        // Execute all bulk queries concurrently for maximum performance
+        let (table_names_result, columns_result, pks_result, indexes_result, fks_result) = tokio::join!(
+            self.fetch_table_names(),
+            self.fetch_all_columns(),
+            self.fetch_all_primary_keys(),
+            self.fetch_all_indexes(),
+            self.fetch_foreign_keys(),
+        );
+
+        let table_names = table_names_result?;
+        let columns_by_table = columns_result?;
+        let pks_by_table = pks_result?;
+        let indexes_by_table = indexes_result?;
+        let foreign_keys = fks_result?;
+
+        // Assemble tables from the bulk query results
+        let tables = table_names
+            .into_iter()
+            .map(|name| {
+                let columns = columns_by_table.get(&name).cloned().unwrap_or_default();
+                let primary_key = pks_by_table.get(&name).cloned().unwrap_or_default();
+                let indexes = indexes_by_table.get(&name).cloned().unwrap_or_default();
+                Table {
+                    name,
+                    columns,
+                    primary_key,
+                    indexes,
+                }
+            })
+            .collect();
 
         Ok(Schema {
             tables,
@@ -227,10 +255,9 @@ impl PostgresClient {
         }
     }
 
-    /// Fetches all tables from the public schema.
-    async fn fetch_tables(&self) -> Result<Vec<Table>> {
-        // Get table names
-        let table_names: Vec<String> = sqlx::query_scalar(
+    /// Fetches all table names from the public schema.
+    async fn fetch_table_names(&self) -> Result<Vec<String>> {
+        sqlx::query_scalar(
             r#"
             SELECT table_name::text
             FROM information_schema.tables
@@ -240,88 +267,87 @@ impl PostgresClient {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| GlanceError::query(format!("Failed to fetch tables: {e}")))?;
-
-        let mut tables = Vec::with_capacity(table_names.len());
-
-        for table_name in table_names {
-            let columns = self.fetch_columns(&table_name).await?;
-            let primary_key = self.fetch_primary_key(&table_name).await?;
-            let indexes = self.fetch_indexes(&table_name).await?;
-
-            tables.push(Table {
-                name: table_name,
-                columns,
-                primary_key,
-                indexes,
-            });
-        }
-
-        Ok(tables)
+        .map_err(|e| GlanceError::query(format!("Failed to fetch tables: {e}")))
     }
 
-    /// Fetches columns for a specific table.
-    async fn fetch_columns(&self, table_name: &str) -> Result<Vec<Column>> {
-        let rows: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+    /// Fetches all columns for all tables in one query, grouped by table name.
+    async fn fetch_all_columns(&self) -> Result<std::collections::HashMap<String, Vec<Column>>> {
+        let rows: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
             r#"
             SELECT
+                table_name::text,
                 column_name::text,
                 data_type::text,
                 is_nullable::text,
                 column_default::text
             FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = $1
-            ORDER BY ordinal_position
+            WHERE table_schema = 'public'
+            ORDER BY table_name, ordinal_position
             "#,
         )
-        .bind(table_name)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| {
-            GlanceError::query(format!("Failed to fetch columns for {table_name}: {e}"))
-        })?;
+        .map_err(|e| GlanceError::query(format!("Failed to fetch columns: {e}")))?;
 
-        Ok(rows
-            .into_iter()
-            .map(|(name, data_type, is_nullable, default)| Column {
-                name,
-                data_type,
-                is_nullable: is_nullable == "YES",
-                default,
-            })
-            .collect())
+        let mut columns_by_table: std::collections::HashMap<String, Vec<Column>> =
+            std::collections::HashMap::new();
+
+        for (table_name, column_name, data_type, is_nullable, default) in rows {
+            columns_by_table
+                .entry(table_name)
+                .or_default()
+                .push(Column {
+                    name: column_name,
+                    data_type,
+                    is_nullable: is_nullable == "YES",
+                    default,
+                });
+        }
+
+        Ok(columns_by_table)
     }
 
-    /// Fetches primary key columns for a specific table.
-    async fn fetch_primary_key(&self, table_name: &str) -> Result<Vec<String>> {
-        let columns: Vec<String> = sqlx::query_scalar(
+    /// Fetches all primary keys for all tables in one query, grouped by table name.
+    async fn fetch_all_primary_keys(
+        &self,
+    ) -> Result<std::collections::HashMap<String, Vec<String>>> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
             r#"
-            SELECT kcu.column_name::text
+            SELECT
+                tc.table_name::text,
+                kcu.column_name::text
             FROM information_schema.table_constraints tc
             JOIN information_schema.key_column_usage kcu
                 ON tc.constraint_name = kcu.constraint_name
                 AND tc.table_schema = kcu.table_schema
             WHERE tc.table_schema = 'public'
-                AND tc.table_name = $1
                 AND tc.constraint_type = 'PRIMARY KEY'
-            ORDER BY kcu.ordinal_position
+            ORDER BY tc.table_name, kcu.ordinal_position
             "#,
         )
-        .bind(table_name)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| {
-            GlanceError::query(format!("Failed to fetch primary key for {table_name}: {e}"))
-        })?;
+        .map_err(|e| GlanceError::query(format!("Failed to fetch primary keys: {e}")))?;
 
-        Ok(columns)
+        let mut pks_by_table: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+
+        for (table_name, column_name) in rows {
+            pks_by_table
+                .entry(table_name)
+                .or_default()
+                .push(column_name);
+        }
+
+        Ok(pks_by_table)
     }
 
-    /// Fetches indexes for a specific table.
-    async fn fetch_indexes(&self, table_name: &str) -> Result<Vec<Index>> {
-        let rows: Vec<(String, String, bool)> = sqlx::query_as(
+    /// Fetches all indexes for all tables in one query, grouped by table name.
+    async fn fetch_all_indexes(&self) -> Result<std::collections::HashMap<String, Vec<Index>>> {
+        let rows: Vec<(String, String, String, bool)> = sqlx::query_as(
             r#"
             SELECT
+                t.relname::text AS table_name,
                 i.relname::text AS index_name,
                 a.attname::text AS column_name,
                 ix.indisunique AS is_unique
@@ -331,38 +357,50 @@ impl PostgresClient {
             JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
             JOIN pg_namespace n ON n.oid = t.relnamespace
             WHERE n.nspname = 'public'
-                AND t.relname = $1
                 AND NOT ix.indisprimary
-            ORDER BY i.relname, a.attnum
+            ORDER BY t.relname, i.relname, a.attnum
             "#,
         )
-        .bind(table_name)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| {
-            GlanceError::query(format!("Failed to fetch indexes for {table_name}: {e}"))
-        })?;
+        .map_err(|e| GlanceError::query(format!("Failed to fetch indexes: {e}")))?;
 
-        // Group by index name
-        let mut index_map: std::collections::HashMap<String, (Vec<String>, bool)> =
+        // Group by table name, then by index name
+        let mut indexes_by_table: std::collections::HashMap<String, Vec<Index>> =
             std::collections::HashMap::new();
+        let mut current_index: Option<(String, String, Vec<String>, bool)> = None;
 
-        for (index_name, column_name, is_unique) in rows {
-            index_map
-                .entry(index_name)
-                .or_insert_with(|| (Vec::new(), is_unique))
-                .0
-                .push(column_name);
+        for (table_name, index_name, column_name, is_unique) in rows {
+            match &mut current_index {
+                Some((cur_table, cur_idx, columns, _))
+                    if cur_table == &table_name && cur_idx == &index_name =>
+                {
+                    columns.push(column_name);
+                }
+                _ => {
+                    // Flush previous index if any
+                    if let Some((prev_table, prev_idx, columns, unique)) = current_index.take() {
+                        indexes_by_table.entry(prev_table).or_default().push(Index {
+                            name: prev_idx,
+                            columns,
+                            is_unique: unique,
+                        });
+                    }
+                    current_index = Some((table_name, index_name, vec![column_name], is_unique));
+                }
+            }
         }
 
-        Ok(index_map
-            .into_iter()
-            .map(|(name, (columns, is_unique))| Index {
-                name,
+        // Flush last index
+        if let Some((table_name, index_name, columns, is_unique)) = current_index {
+            indexes_by_table.entry(table_name).or_default().push(Index {
+                name: index_name,
                 columns,
                 is_unique,
-            })
-            .collect())
+            });
+        }
+
+        Ok(indexes_by_table)
     }
 
     /// Fetches all foreign key relationships.

@@ -149,6 +149,8 @@ pub enum Command {
     LlmKey(LlmKeyArgs),
     /// Show LLM settings.
     LlmSettings,
+    /// Refresh the database schema.
+    RefreshSchema,
     /// Natural language query (not a slash command).
     NaturalLanguage(String),
     /// Unknown command.
@@ -197,7 +199,17 @@ impl CommandRouter {
             "/usequery" => Command::UseQuery(args.to_string()),
             "/query" => Self::parse_query_command(args),
             "/llm" => Self::parse_llm_command(args),
+            "/refresh" => Self::parse_refresh_command(args),
             _ => Command::Unknown(command),
+        }
+    }
+
+    /// Parse /refresh subcommands.
+    fn parse_refresh_command(args: &str) -> Command {
+        let subcommand = args.split_whitespace().next().unwrap_or("").to_lowercase();
+        match subcommand.as_str() {
+            "schema" | "" => Command::RefreshSchema,
+            _ => Command::Unknown("/refresh".to_string()),
         }
     }
 
@@ -667,5 +679,29 @@ mod tests {
             Command::Sql(_)
         ));
         assert!(matches!(CommandRouter::parse("/Help"), Command::Help));
+    }
+
+    #[test]
+    fn test_parse_refresh_schema() {
+        assert!(matches!(
+            CommandRouter::parse("/refresh schema"),
+            Command::RefreshSchema
+        ));
+        assert!(matches!(
+            CommandRouter::parse("/refresh"),
+            Command::RefreshSchema
+        ));
+        assert!(matches!(
+            CommandRouter::parse("/REFRESH SCHEMA"),
+            Command::RefreshSchema
+        ));
+    }
+
+    #[test]
+    fn test_parse_refresh_unknown() {
+        assert!(matches!(
+            CommandRouter::parse("/refresh unknown"),
+            Command::Unknown(_)
+        ));
     }
 }

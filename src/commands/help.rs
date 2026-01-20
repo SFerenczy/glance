@@ -5,6 +5,7 @@ pub const HELP_TEXT: &str = r#"Available commands:
   /sql <query>     - Execute raw SQL directly
   /clear           - Clear chat history and LLM context
   /schema          - Display database schema
+  /refresh schema  - Re-introspect database schema
   /vim             - Toggle vim-style navigation mode
   /help            - Show this help message
   /quit, /exit     - Exit the application
