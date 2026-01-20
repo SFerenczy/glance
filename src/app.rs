@@ -137,42 +137,8 @@ impl Orchestrator {
             None
         };
 
-        match provider {
-            LlmProvider::OpenAi => {
-                use crate::llm::{OpenAiClient, OpenAiConfig};
-                let api_key = persisted_key
-                    .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-                    .ok_or_else(|| {
-                        GlanceError::llm(
-                            "No API key configured. Use /llm key <key> or set OPENAI_API_KEY.",
-                        )
-                    })?;
-                let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
-                Ok(Box::new(OpenAiClient::new(OpenAiConfig::new(
-                    api_key, model,
-                ))?))
-            }
-            LlmProvider::Anthropic => {
-                use crate::llm::{AnthropicClient, AnthropicConfig};
-                let api_key = persisted_key
-                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-                    .ok_or_else(|| {
-                        GlanceError::llm(
-                            "No API key configured. Use /llm key <key> or set ANTHROPIC_API_KEY.",
-                        )
-                    })?;
-                let model = std::env::var("ANTHROPIC_MODEL")
-                    .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
-                Ok(Box::new(AnthropicClient::new(AnthropicConfig::new(
-                    api_key, model,
-                ))?))
-            }
-            LlmProvider::Ollama => {
-                use crate::llm::OllamaClient;
-                Ok(Box::new(OllamaClient::from_env()?))
-            }
-            LlmProvider::Mock => Ok(Box::new(MockLlmClient::new())),
-        }
+        // Delegate to LLM layer factory
+        crate::llm::create_client(provider, persisted_key)
     }
 
     /// Rebuilds the LLM client with current settings from persistence.

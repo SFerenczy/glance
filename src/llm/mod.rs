@@ -6,6 +6,7 @@
 #![allow(unused_imports)] // Re-exports for external use
 
 pub mod anthropic;
+pub mod factory;
 pub mod mock;
 pub mod ollama;
 pub mod openai;
@@ -16,6 +17,7 @@ pub mod tools;
 pub mod types;
 
 pub use anthropic::{AnthropicClient, AnthropicConfig};
+pub use factory::create_client;
 pub use mock::MockLlmClient;
 pub use ollama::{OllamaClient, OllamaConfig};
 pub use openai::{OpenAiClient, OpenAiConfig};
