@@ -11,6 +11,7 @@ pub mod ollama;
 pub mod openai;
 pub mod parser;
 pub mod prompt;
+pub mod service;
 pub mod tools;
 pub mod types;
 

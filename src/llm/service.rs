@@ -1,0 +1,272 @@
+//! LLM service for orchestrating natural language to SQL conversion.
+//!
+//! Encapsulates LLM interaction, prompt building, and tool handling.
+
+use std::sync::Arc;
+
+use crate::db::Schema;
+use crate::error::Result;
+use crate::persistence::{self, SavedQueryFilter, StateDb};
+
+use super::{
+    build_messages_cached, format_saved_queries_for_llm, get_tool_definitions, parse_llm_response,
+    Conversation, ListSavedQueriesInput, LlmClient, LlmResponse, PromptCache, ToolResult,
+};
+
+/// LLM service that handles natural language processing and tool calls.
+#[allow(dead_code)]
+pub struct LlmService {
+    client: Box<dyn LlmClient>,
+    prompt_cache: PromptCache,
+}
+
+/// Context for tool execution.
+#[allow(dead_code)]
+pub struct ToolContext<'a> {
+    /// State database for persistence.
+    pub state_db: Option<&'a Arc<StateDb>>,
+    /// Current connection name.
+    pub current_connection: Option<&'a str>,
+}
+
+/// Result of LLM processing.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum LlmResult {
+    /// SQL was generated, with optional explanation.
+    Sql {
+        sql: String,
+        explanation: Option<String>,
+    },
+    /// No SQL, just explanatory text.
+    Explanation(String),
+}
+
+#[allow(dead_code)]
+impl LlmService {
+    /// Creates a new LLM service.
+    pub fn new(client: Box<dyn LlmClient>) -> Self {
+        Self {
+            client,
+            prompt_cache: PromptCache::new(),
+        }
+    }
+
+    /// Process natural language input and return SQL or explanation.
+    pub async fn process_query(
+        &mut self,
+        input: &str,
+        schema: &Schema,
+        conversation: &mut Conversation,
+        tool_context: &ToolContext<'_>,
+    ) -> Result<LlmResult> {
+        conversation.add_user(input);
+
+        let messages = build_messages_cached(&mut self.prompt_cache, schema, conversation);
+        let tools = get_tool_definitions();
+
+        let mut response = self.client.complete_with_tools(&messages, &tools).await?;
+
+        if response.has_tool_calls() {
+            response = self
+                .handle_tool_calls(response, &tools, schema, conversation, tool_context)
+                .await?;
+        }
+
+        conversation.add_assistant(&response.content);
+
+        let parsed = parse_llm_response(&response.content);
+
+        if let Some(sql) = parsed.sql {
+            Ok(LlmResult::Sql {
+                sql,
+                explanation: if parsed.text.is_empty() {
+                    None
+                } else {
+                    Some(parsed.text)
+                },
+            })
+        } else {
+            Ok(LlmResult::Explanation(parsed.text))
+        }
+    }
+
+    /// Handle tool calls from the LLM and return the final response.
+    async fn handle_tool_calls(
+        &mut self,
+        response: LlmResponse,
+        tools: &[super::ToolDefinition],
+        schema: &Schema,
+        conversation: &Conversation,
+        tool_context: &ToolContext<'_>,
+    ) -> Result<LlmResponse> {
+        let mut tool_results = Vec::new();
+
+        for tool_call in &response.tool_calls {
+            let result = self
+                .execute_tool(&tool_call.name, &tool_call.arguments, tool_context)
+                .await;
+            tool_results.push(ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: result,
+            });
+        }
+
+        let messages = build_messages_cached(&mut self.prompt_cache, schema, conversation);
+
+        self.client
+            .continue_with_tool_results(&messages, &response.tool_calls, &tool_results, tools)
+            .await
+    }
+
+    /// Execute a tool and return the result as JSON string.
+    async fn execute_tool(
+        &self,
+        name: &str,
+        arguments: &str,
+        tool_context: &ToolContext<'_>,
+    ) -> String {
+        match name {
+            "list_saved_queries" => {
+                self.execute_list_saved_queries(arguments, tool_context)
+                    .await
+            }
+            _ => serde_json::json!({
+                "error": format!("Unknown tool: {}", name)
+            })
+            .to_string(),
+        }
+    }
+
+    /// Execute the list_saved_queries tool.
+    async fn execute_list_saved_queries(
+        &self,
+        arguments: &str,
+        tool_context: &ToolContext<'_>,
+    ) -> String {
+        let state_db = match tool_context.state_db {
+            Some(db) => db,
+            None => {
+                return serde_json::json!({
+                    "error": "State database not available"
+                })
+                .to_string();
+            }
+        };
+
+        let input: ListSavedQueriesInput = match serde_json::from_str(arguments) {
+            Ok(input) => input,
+            Err(_) => ListSavedQueriesInput {
+                connection_name: None,
+                tags: None,
+                text: None,
+                limit: None,
+            },
+        };
+
+        let filter = SavedQueryFilter {
+            connection_name: input
+                .connection_name
+                .or_else(|| tool_context.current_connection.map(|s| s.to_string())),
+            include_global: true,
+            tag: input.tags.and_then(|t| t.into_iter().next()),
+            text_search: input.text,
+            limit: input.limit,
+        };
+
+        match persistence::saved_queries::list_saved_queries(state_db.pool(), &filter).await {
+            Ok(queries) => {
+                let output = format_saved_queries_for_llm(&queries);
+                serde_json::to_string(&output).unwrap_or_else(|_| "[]".to_string())
+            }
+            Err(e) => serde_json::json!({
+                "error": format!("Failed to list saved queries: {}", e)
+            })
+            .to_string(),
+        }
+    }
+
+    /// Returns a reference to the underlying LLM client.
+    pub fn client(&self) -> &dyn LlmClient {
+        self.client.as_ref()
+    }
+
+    /// Replaces the LLM client (e.g., after provider change).
+    pub fn set_client(&mut self, client: Box<dyn LlmClient>) {
+        self.client = client;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{Column, Table};
+    use crate::llm::MockLlmClient;
+
+    fn sample_schema() -> Schema {
+        Schema {
+            tables: vec![Table {
+                name: "users".to_string(),
+                columns: vec![
+                    Column::new("id", "integer"),
+                    Column::new("name", "varchar(255)"),
+                ],
+                primary_key: vec!["id".to_string()],
+                indexes: vec![],
+            }],
+            foreign_keys: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_query_returns_sql() {
+        let mut service = LlmService::new(Box::new(MockLlmClient::new()));
+        let schema = sample_schema();
+        let mut conversation = Conversation::new();
+        let tool_context = ToolContext {
+            state_db: None,
+            current_connection: None,
+        };
+
+        let result = service
+            .process_query(
+                "show me all users",
+                &schema,
+                &mut conversation,
+                &tool_context,
+            )
+            .await
+            .unwrap();
+
+        match result {
+            LlmResult::Sql { sql, .. } => {
+                assert!(sql.to_uppercase().contains("SELECT"));
+            }
+            LlmResult::Explanation(_) => panic!("Expected SQL result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_conversation_updated() {
+        let mut service = LlmService::new(Box::new(MockLlmClient::new()));
+        let schema = sample_schema();
+        let mut conversation = Conversation::new();
+        let tool_context = ToolContext {
+            state_db: None,
+            current_connection: None,
+        };
+
+        assert!(conversation.is_empty());
+
+        let _ = service
+            .process_query(
+                "show me all users",
+                &schema,
+                &mut conversation,
+                &tool_context,
+            )
+            .await;
+
+        assert!(!conversation.is_empty());
+    }
+}

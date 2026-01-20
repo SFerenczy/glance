@@ -2,11 +2,14 @@
 
 mod app;
 mod cli;
+mod commands;
 mod config;
+mod connection;
 mod db;
 mod error;
 mod llm;
 mod persistence;
+mod query;
 mod safety;
 mod tui;
 
