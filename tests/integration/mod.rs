@@ -7,3 +7,4 @@ pub mod connection_test;
 pub mod persistence_test;
 pub mod query_test;
 pub mod schema_test;
+pub mod streaming_test;

@@ -23,7 +23,11 @@ pub struct QueryResult {
     /// Number of rows in the result (may be truncated).
     pub row_count: usize,
 
-    /// Total number of rows before truncation (if known).
+    /// Total number of rows before truncation.
+    ///
+    /// This is `None` when `was_truncated` is true, because streaming execution
+    /// stops early and doesn't fetch the full result set. When `was_truncated`
+    /// is false, this equals `row_count`.
     pub total_rows: Option<usize>,
 
     /// Whether the result was truncated due to exceeding MAX_ROWS.

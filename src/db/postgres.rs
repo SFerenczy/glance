@@ -9,6 +9,7 @@ use crate::db::{
 };
 use crate::error::{GlanceError, Result};
 use async_trait::async_trait;
+use futures::StreamExt;
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column as SqlxColumn, Row as SqlxRow, TypeInfo};
 use std::time::{Duration, Instant};
@@ -101,47 +102,57 @@ impl DatabaseClient for PostgresClient {
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
         let start = Instant::now();
 
-        // Use a timeout for query execution
-        let result = tokio::time::timeout(
-            Duration::from_secs(QUERY_TIMEOUT_SECS),
-            sqlx::query(sql).fetch_all(&self.pool),
-        )
-        .await
-        .map_err(|_| {
+        // Use streaming fetch with early termination for bounded memory usage
+        let mut stream = sqlx::query(sql).fetch(&self.pool);
+        let mut rows: Vec<Row> = Vec::with_capacity(MAX_ROWS);
+        let mut columns: Option<Vec<ColumnInfo>> = None;
+        let mut was_truncated = false;
+
+        let timeout_result = tokio::time::timeout(Duration::from_secs(QUERY_TIMEOUT_SECS), async {
+            while let Some(row_result) = stream.next().await {
+                let pg_row = row_result.map_err(|e| GlanceError::query(format_query_error(e)))?;
+
+                // Extract column metadata from first row
+                if columns.is_none() {
+                    columns = Some(
+                        pg_row
+                            .columns()
+                            .iter()
+                            .map(|col| ColumnInfo::new(col.name(), col.type_info().name()))
+                            .collect(),
+                    );
+                }
+
+                if rows.len() < MAX_ROWS {
+                    rows.push(convert_row(&pg_row));
+                } else {
+                    // We've seen MAX_ROWS + 1, so result is truncated
+                    was_truncated = true;
+                    break; // Stop consuming the stream
+                }
+            }
+            Ok::<_, GlanceError>(())
+        })
+        .await;
+
+        // Handle timeout
+        timeout_result.map_err(|_| {
             GlanceError::query(format!(
                 "Query timed out after {QUERY_TIMEOUT_SECS} seconds"
             ))
-        })?
-        .map_err(|e| GlanceError::query(format_query_error(e)))?;
+        })??;
 
         let execution_time = start.elapsed();
 
-        // Extract column metadata - from first row if available, otherwise fetch with LIMIT 0
-        let columns: Vec<ColumnInfo> = if let Some(first_row) = result.first() {
-            first_row
-                .columns()
-                .iter()
-                .map(|col| ColumnInfo::new(col.name(), col.type_info().name()))
-                .collect()
-        } else {
-            // Empty result - try to get column metadata by wrapping in a subquery
-            // This works for SELECT statements
-            self.fetch_column_metadata(sql).await.unwrap_or_default()
+        // Handle empty result - fetch column metadata separately
+        let columns = match columns {
+            Some(cols) => cols,
+            None => self.fetch_column_metadata(sql).await.unwrap_or_default(),
         };
 
-        // Check if result set exceeds MAX_ROWS
-        let total_rows = result.len();
-        let was_truncated = total_rows > MAX_ROWS;
-
         if was_truncated {
-            warn!(
-                "Query returned {} rows, truncating to {} rows",
-                total_rows, MAX_ROWS
-            );
+            warn!("Query exceeded {} rows, result truncated", MAX_ROWS);
         }
-
-        // Convert rows, limiting to MAX_ROWS
-        let rows: Vec<Row> = result.iter().take(MAX_ROWS).map(convert_row).collect();
 
         let row_count = rows.len();
 
@@ -150,7 +161,8 @@ impl DatabaseClient for PostgresClient {
             rows,
             execution_time,
             row_count,
-            total_rows: Some(total_rows),
+            // When truncated, we don't know the true total (we stopped early)
+            total_rows: if was_truncated { None } else { Some(row_count) },
             was_truncated,
         })
     }
