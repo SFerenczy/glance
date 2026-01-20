@@ -414,6 +414,8 @@ impl Tui {
                     && app_state.focus == app::Focus::Input
                     && !app_state.command_palette.visible
                 {
+                    // Close SQL completion popup if open (Enter submits, doesn't accept completion)
+                    app_state.sql_completion.close();
                     if let Some(input) = app_state.submit_input() {
                         // Add user message to chat
                         app_state.add_message(app::ChatMessage::User(input.clone()));
@@ -544,12 +546,14 @@ impl Tui {
                     Ok(InputResult::ConnectionSwitch {
                         messages,
                         connection_info,
+                        schema,
                     }) => {
                         for m in messages {
                             app_state.add_message(m);
                         }
                         app_state.connection_info = Some(connection_info);
                         app_state.is_connected = true;
+                        app_state.schema = Some(schema);
                     }
                     Ok(InputResult::None) => {}
                     Err(e) => {

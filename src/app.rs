@@ -82,6 +82,8 @@ pub enum InputResult {
         messages: Vec<ChatMessage>,
         /// New connection display string for the header.
         connection_info: String,
+        /// Database schema for SQL completions.
+        schema: Schema,
     },
 }
 
@@ -250,7 +252,7 @@ impl Orchestrator {
     /// Creates a fully mocked orchestrator for headless testing.
     #[allow(dead_code)]
     pub async fn for_headless_testing(state_db: Arc<StateDb>) -> Self {
-        use crate::db::MockDatabaseClient;
+        use crate::db::{Column, MockDatabaseClient, Table};
 
         // Create a test connection entry in the database to satisfy foreign key constraints
         let _ = sqlx::query(
@@ -259,10 +261,49 @@ impl Orchestrator {
         .execute(state_db.pool())
         .await;
 
+        // Create a test schema with sample tables for SQL completion testing
+        let schema = Schema {
+            tables: vec![
+                Table {
+                    name: "users".to_string(),
+                    columns: vec![
+                        Column::new("id", "integer"),
+                        Column::new("name", "varchar(255)"),
+                        Column::new("email", "varchar(255)"),
+                        Column::new("created_at", "timestamp"),
+                    ],
+                    primary_key: vec!["id".to_string()],
+                    indexes: vec![],
+                },
+                Table {
+                    name: "orders".to_string(),
+                    columns: vec![
+                        Column::new("id", "integer"),
+                        Column::new("user_id", "integer"),
+                        Column::new("total", "decimal"),
+                        Column::new("status", "varchar(50)"),
+                    ],
+                    primary_key: vec!["id".to_string()],
+                    indexes: vec![],
+                },
+                Table {
+                    name: "products".to_string(),
+                    columns: vec![
+                        Column::new("id", "integer"),
+                        Column::new("name", "varchar(255)"),
+                        Column::new("price", "decimal"),
+                    ],
+                    primary_key: vec!["id".to_string()],
+                    indexes: vec![],
+                },
+            ],
+            foreign_keys: vec![],
+        };
+
         Self {
             db: Some(Box::new(MockDatabaseClient::new())),
             llm: Box::new(MockLlmClient::new()),
-            schema: Schema::default(),
+            schema,
             state_db: Some(state_db),
             current_connection_name: Some("test".to_string()),
             last_executed_sql: None,
@@ -796,6 +837,7 @@ impl Orchestrator {
                 args, profile.database
             ))],
             connection_info: format!("{} ({})", args, profile.database),
+            schema: self.schema.clone(),
         })
     }
 

@@ -93,6 +93,12 @@ pub struct HeadlessState {
     pub message_count: usize,
     /// Whether the app is still running.
     pub running: bool,
+    /// Whether SQL completion popup is visible.
+    pub sql_completion_visible: bool,
+    /// Currently selected SQL completion index.
+    pub sql_completion_selected: usize,
+    /// Number of SQL completion items.
+    pub sql_completion_count: usize,
 }
 
 impl HeadlessState {
@@ -103,6 +109,9 @@ impl HeadlessState {
             is_processing: app.is_processing,
             message_count: app.messages.len(),
             running: app.running,
+            sql_completion_visible: app.sql_completion.visible,
+            sql_completion_selected: app.sql_completion.selected,
+            sql_completion_count: app.sql_completion.items.len(),
         }
     }
 }
@@ -155,6 +164,8 @@ impl HeadlessRunner {
 
     /// Sets the orchestrator for command processing.
     pub fn with_orchestrator(mut self, orchestrator: Orchestrator) -> Self {
+        // Copy schema to app for SQL completion
+        self.app.schema = Some(orchestrator.schema().clone());
         self.orchestrator = Some(orchestrator);
         self
     }
@@ -201,6 +212,8 @@ impl HeadlessRunner {
                 Event::Key(key_event) => {
                     // Special handling for Enter key when orchestrator is available
                     if key_event.code == KeyCode::Enter && self.orchestrator.is_some() {
+                        // Close SQL completion popup if open (Enter submits, doesn't accept)
+                        self.app.sql_completion.close();
                         self.handle_enter_with_orchestrator().await?;
                     } else {
                         self.app.handle_event(crate::tui::Event::Key(*key_event));
@@ -210,6 +223,8 @@ impl HeadlessRunner {
                     for c in text.chars() {
                         self.app.input.insert(c);
                     }
+                    // Update SQL completions after typing
+                    self.app.update_sql_completions();
                 }
                 Event::Wait(duration) => {
                     tokio::time::sleep(*duration).await;
@@ -323,12 +338,14 @@ impl HeadlessRunner {
             InputResult::ConnectionSwitch {
                 messages,
                 connection_info,
+                schema,
             } => {
                 for msg in messages {
                     self.app.add_message(msg);
                 }
                 self.app.connection_info = Some(connection_info);
                 self.app.is_connected = true;
+                self.app.schema = Some(schema);
             }
         }
     }

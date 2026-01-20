@@ -181,17 +181,19 @@ impl EventParser {
         let mut events = Vec::new();
 
         for line in input.lines() {
-            let line = line.trim();
+            // Only trim leading whitespace to preserve trailing spaces in type events
+            let line = line.trim_start();
 
             // Skip empty lines and comments
-            if line.is_empty() || line.starts_with('#') {
+            if line.trim().is_empty() || line.starts_with('#') {
                 continue;
             }
 
-            // Split by comma for inline events
+            // Split by comma for inline events, but be careful with trailing spaces
             for part in line.split(',') {
-                let part = part.trim();
-                if part.is_empty() {
+                // Trim leading whitespace but preserve trailing for type events
+                let part = part.trim_start();
+                if part.trim().is_empty() {
                     continue;
                 }
 
@@ -204,11 +206,12 @@ impl EventParser {
 
     /// Parses a single event string.
     pub fn parse_one(&self, input: &str) -> Result<Event> {
-        let input = input.trim();
+        // Only trim leading whitespace to preserve trailing spaces for type events
+        let input_trimmed = input.trim_start();
 
         // Split into type and value
-        let (event_type, value) = match input.split_once(':') {
-            Some((t, v)) => (t.trim().to_lowercase(), v.trim()),
+        let (event_type, value) = match input_trimmed.split_once(':') {
+            Some((t, v)) => (t.trim().to_lowercase(), v),
             None => {
                 return Err(GlanceError::config(format!(
                     "Invalid event syntax: '{}'. Expected format: type:value",
@@ -218,12 +221,13 @@ impl EventParser {
         };
 
         match event_type.as_str() {
-            "key" => self.parse_key(value),
+            "key" => self.parse_key(value.trim()),
+            // For type events, preserve the original text (don't trim trailing spaces)
             "type" => Ok(Event::Type(value.to_string())),
-            "wait" => self.parse_wait(value),
-            "resize" => self.parse_resize(value),
-            "snapshot" => Ok(Event::Snapshot(value.to_string())),
-            "assert" => self.parse_assert(value),
+            "wait" => self.parse_wait(value.trim()),
+            "resize" => self.parse_resize(value.trim()),
+            "snapshot" => Ok(Event::Snapshot(value.trim().to_string())),
+            "assert" => self.parse_assert(value.trim()),
             _ => Err(GlanceError::config(format!(
                 "Unknown event type: '{}'. Valid types: key, type, wait, resize, snapshot, assert",
                 event_type

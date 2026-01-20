@@ -25,6 +25,10 @@ pub enum CompletionKind {
     Keyword,
     /// A SQL function.
     Function,
+    /// A SQL operator.
+    Operator,
+    /// Non-insertable hint (informational only).
+    Hint,
 }
 
 impl CompletionKind {
@@ -35,6 +39,8 @@ impl CompletionKind {
             Self::Column => "col",
             Self::Keyword => "kw",
             Self::Function => "fn",
+            Self::Operator => "op",
+            Self::Hint => "...",
         }
     }
 
@@ -45,7 +51,14 @@ impl CompletionKind {
             Self::Column => Color::Cyan,
             Self::Keyword => Color::Magenta,
             Self::Function => Color::Green,
+            Self::Operator => Color::Blue,
+            Self::Hint => Color::DarkGray,
         }
+    }
+
+    /// Returns true if this is a non-insertable hint.
+    pub fn is_hint(&self) -> bool {
+        matches!(self, Self::Hint)
     }
 }
 
@@ -121,14 +134,47 @@ impl SqlCompletionState {
                 // Suggest table names
                 if let Some(schema) = schema {
                     self.add_tables(schema);
+                } else {
+                    // Graceful degradation: show hint when no schema
+                    self.items.push(CompletionItem::new(
+                        "(connect to see tables)",
+                        CompletionKind::Hint,
+                    ));
                 }
             }
-            SqlContext::WhereClause | SqlContext::JoinCondition => {
+            SqlContext::WhereClause => {
+                // Suggest columns from referenced tables (not operators)
+                if let Some(schema) = schema {
+                    self.add_columns_from_tables(schema, &result.tables);
+                } else {
+                    // Graceful degradation: show hint when no schema
+                    self.items.push(CompletionItem::new(
+                        "(connect to see columns)",
+                        CompletionKind::Hint,
+                    ));
+                }
+            }
+            SqlContext::WhereOperator => {
+                // Suggest comparison operators
+                self.add_operators();
+            }
+            SqlContext::WhereValue => {
+                // Suggest common values
+                self.add_keywords(&["NULL", "TRUE", "FALSE"]);
+                self.items.push(
+                    CompletionItem::new("(SELECT ...", CompletionKind::Keyword)
+                        .with_detail("subquery"),
+                );
+            }
+            SqlContext::WhereContinuation => {
+                // Suggest logical operators and clause continuations
+                self.add_keywords(&["AND", "OR", "ORDER BY", "GROUP BY", "LIMIT"]);
+            }
+            SqlContext::JoinCondition => {
                 // Suggest columns from referenced tables
                 if let Some(schema) = schema {
                     self.add_columns_from_tables(schema, &result.tables);
                 }
-                self.add_keywords(&["AND", "OR", "NOT", "IN", "LIKE", "BETWEEN", "IS", "NULL"]);
             }
             SqlContext::OrderBy | SqlContext::GroupBy => {
                 // Suggest columns
@@ -242,6 +288,27 @@ impl SqlCompletionState {
         for func in functions {
             self.items
                 .push(CompletionItem::new(func, CompletionKind::Function));
+        }
+    }
+
+    /// Adds SQL comparison operators.
+    fn add_operators(&mut self) {
+        let operators = [
+            ("=", "equals"),
+            ("!=", "not equals"),
+            ("<>", "not equals"),
+            ("<", "less than"),
+            (">", "greater than"),
+            ("<=", "less than or equal"),
+            (">=", "greater than or equal"),
+            ("IS", "is null/not null"),
+            ("IN", "in list"),
+            ("LIKE", "pattern match"),
+            ("BETWEEN", "range"),
+        ];
+        for (op, detail) in operators {
+            self.items
+                .push(CompletionItem::new(op, CompletionKind::Operator).with_detail(detail));
         }
     }
 
@@ -462,5 +529,59 @@ mod tests {
         state.close();
         assert!(!state.visible);
         assert!(state.items.is_empty());
+    }
+
+    #[test]
+    fn test_completion_where_operator_context() {
+        let mut state = SqlCompletionState::new();
+        let schema = test_schema();
+        // After column name in WHERE, should suggest operators
+        state.update("SELECT * FROM users WHERE status ", 33, Some(&schema));
+
+        assert!(state.visible, "Completion should be visible");
+        assert!(
+            state.items.iter().any(|i| i.text == "="),
+            "Should have '=' operator"
+        );
+        assert!(
+            state.items.iter().any(|i| i.text == "LIKE"),
+            "Should have 'LIKE' operator"
+        );
+    }
+
+    #[test]
+    fn test_completion_where_value_context() {
+        let mut state = SqlCompletionState::new();
+        let schema = test_schema();
+        // After operator in WHERE, should suggest values
+        state.update("SELECT * FROM users WHERE status = ", 35, Some(&schema));
+
+        assert!(state.visible, "Completion should be visible");
+        assert!(
+            state.items.iter().any(|i| i.text == "TRUE"),
+            "Should have 'TRUE' value"
+        );
+        assert!(
+            state.items.iter().any(|i| i.text == "NULL"),
+            "Should have 'NULL' value"
+        );
+    }
+
+    #[test]
+    fn test_completion_where_continuation_context() {
+        let mut state = SqlCompletionState::new();
+        let schema = test_schema();
+        // After complete condition, should suggest AND/OR
+        state.update("SELECT * FROM users WHERE id = 1 ", 33, Some(&schema));
+
+        assert!(state.visible, "Completion should be visible");
+        assert!(
+            state.items.iter().any(|i| i.text == "AND"),
+            "Should have 'AND' keyword"
+        );
+        assert!(
+            state.items.iter().any(|i| i.text == "OR"),
+            "Should have 'OR' keyword"
+        );
     }
 }

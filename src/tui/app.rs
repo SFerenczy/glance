@@ -5,8 +5,10 @@
 use super::history::InputHistory;
 use super::widgets::command_palette::CommandPaletteState;
 use super::widgets::spinner::Spinner;
+use super::widgets::sql_completion::SqlCompletionState;
 use crate::config::ConnectionConfig;
 use crate::db::QueryResult;
+use crate::db::Schema;
 use std::time::{Duration, Instant};
 
 /// Status of an executed query.
@@ -349,6 +351,12 @@ pub struct App {
     pub text_selection: Option<TextSelection>,
     /// The area where the chat panel was last rendered (for mouse hit testing).
     pub chat_area: Option<ratatui::layout::Rect>,
+    /// SQL completion state for /sql mode.
+    pub sql_completion: SqlCompletionState,
+    /// Database schema for completions.
+    pub schema: Option<Schema>,
+    /// The area where the input bar was last rendered (for popup positioning).
+    pub input_area: Option<ratatui::layout::Rect>,
 }
 
 /// Represents a text selection in the chat panel.
@@ -408,6 +416,9 @@ impl App {
             vim_mode_enabled: false, // Vim mode disabled by default
             text_selection: None,
             chat_area: None,
+            sql_completion: SqlCompletionState::new(),
+            schema: None,
+            input_area: None,
         }
     }
 
@@ -567,6 +578,82 @@ impl App {
         self.show_query_detail = false;
     }
 
+    /// Returns true if the input is in SQL mode (starts with "/sql ").
+    pub fn is_sql_mode(&self) -> bool {
+        self.input.text.starts_with("/sql ")
+    }
+
+    /// Returns the SQL portion of the input (after "/sql ").
+    pub fn sql_input(&self) -> &str {
+        self.input
+            .text
+            .strip_prefix("/sql ")
+            .unwrap_or(&self.input.text)
+    }
+
+    /// Returns the cursor position within the SQL portion.
+    pub fn sql_cursor(&self) -> usize {
+        if self.is_sql_mode() {
+            self.input.cursor.saturating_sub(5) // "/sql " is 5 chars
+        } else {
+            self.input.cursor
+        }
+    }
+
+    /// Updates SQL completions based on current input.
+    pub fn update_sql_completions(&mut self) {
+        if self.is_sql_mode() {
+            // Clone the SQL portion to avoid borrow conflicts
+            let sql = self.sql_input().to_string();
+            let cursor = self.sql_cursor();
+            self.sql_completion
+                .update(&sql, cursor, self.schema.as_ref());
+        } else {
+            self.sql_completion.close();
+        }
+    }
+
+    /// Sets the database schema for SQL completions.
+    #[allow(dead_code)]
+    pub fn set_schema(&mut self, schema: Schema) {
+        self.schema = Some(schema);
+    }
+
+    /// Accepts the currently selected SQL completion.
+    /// Returns true if a completion was accepted.
+    pub fn accept_sql_completion(&mut self, close_popup: bool) -> bool {
+        if !self.sql_completion.visible {
+            return false;
+        }
+
+        if let Some(item) = self.sql_completion.selected_item().cloned() {
+            // Calculate the replacement range
+            let filter_len = self.sql_completion.filter.len();
+            let sql_cursor = self.sql_cursor();
+
+            // Remove the partial word that was being typed
+            let start_pos = 5 + sql_cursor.saturating_sub(filter_len); // 5 for "/sql "
+            let end_pos = 5 + sql_cursor;
+
+            // Replace the filter text with the completion
+            if start_pos <= self.input.text.len() && end_pos <= self.input.text.len() {
+                self.input
+                    .text
+                    .replace_range(start_pos..end_pos, &item.text);
+                self.input.cursor = start_pos + item.text.len();
+            }
+
+            if close_popup {
+                self.sql_completion.close();
+            } else {
+                // Update completions for the new input
+                self.update_sql_completions();
+            }
+            return true;
+        }
+        false
+    }
+
     /// Returns the total number of lines needed to render all messages.
     /// This is used for scroll calculations.
     pub fn total_chat_lines(&self) -> usize {
@@ -618,8 +705,8 @@ impl App {
                         self.running = false;
                     }
 
-                    // Focus switching
-                    KeyCode::Tab => {
+                    // Focus switching (but not when SQL completion is visible)
+                    KeyCode::Tab if !self.sql_completion.visible => {
                         self.focus = self.focus.next();
                     }
 
@@ -812,12 +899,67 @@ impl App {
             }
             KeyCode::Char(c) => {
                 self.input.insert(c);
+                // If space is typed after a valid command name, close the palette
+                if c == ' ' {
+                    let filter = self.input.text.strip_prefix('/').unwrap_or("");
+                    let cmd_name = filter.trim_end();
+                    // Check if the text before space matches a command name exactly
+                    let is_complete_command = super::widgets::command_palette::COMMANDS
+                        .iter()
+                        .any(|cmd| cmd.name.eq_ignore_ascii_case(cmd_name));
+                    if is_complete_command {
+                        self.command_palette.close();
+                        // Trigger SQL completions if we just completed "/sql "
+                        self.update_sql_completions();
+                        return true;
+                    }
+                }
                 let filter = self.input.text.strip_prefix('/').unwrap_or("");
                 self.command_palette.set_filter(filter);
             }
             _ => {}
         }
         true
+    }
+
+    /// Handles SQL completion input. Returns true if event was consumed.
+    fn handle_sql_completion_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+
+        if !self.sql_completion.visible {
+            // Ctrl+Space forces completion popup open
+            if key.code == KeyCode::Char(' ')
+                && key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                && self.is_sql_mode()
+            {
+                self.update_sql_completions();
+                return true;
+            }
+            return false;
+        }
+
+        match key.code {
+            KeyCode::Esc => {
+                self.sql_completion.close();
+                true
+            }
+            KeyCode::Up => {
+                self.sql_completion.select_previous();
+                true
+            }
+            KeyCode::Down => {
+                self.sql_completion.select_next();
+                true
+            }
+            KeyCode::Tab => {
+                // Accept completion and close popup
+                self.accept_sql_completion(true);
+                true
+            }
+            _ => false, // Let other keys (including Enter) pass through
+        }
     }
 
     /// Handles key events in standard mode (vim mode disabled).
@@ -829,10 +971,19 @@ impl App {
             return;
         }
 
+        // Handle SQL completion if visible
+        if self.handle_sql_completion_key(key) {
+            return;
+        }
+
         match key.code {
-            // Esc clears input in standard mode
+            // Esc clears input in standard mode (also closes SQL completion)
             KeyCode::Esc => {
-                self.input.clear();
+                if self.sql_completion.visible {
+                    self.sql_completion.close();
+                } else {
+                    self.input.clear();
+                }
             }
             // Clear input with Ctrl+U
             KeyCode::Char('u')
@@ -841,18 +992,21 @@ impl App {
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
                 self.input.clear();
+                self.sql_completion.close();
             }
-            // History navigation
+            // History navigation (only when SQL completion not visible)
             KeyCode::Up => {
                 if let Some(entry) = self.input_history.previous(&self.input.text) {
                     self.input.text = entry.to_string();
                     self.input.cursor = self.input.text.len();
+                    self.update_sql_completions();
                 }
             }
             KeyCode::Down => {
                 if let Some(entry) = self.input_history.next() {
                     self.input.text = entry.to_string();
                     self.input.cursor = self.input.text.len();
+                    self.update_sql_completions();
                 }
             }
             // Text input
@@ -862,25 +1016,32 @@ impl App {
                     self.command_palette.open();
                 } else {
                     self.input.insert(c);
+                    self.update_sql_completions();
                 }
             }
             KeyCode::Backspace => {
                 self.input.backspace();
+                self.update_sql_completions();
             }
             KeyCode::Delete => {
                 self.input.delete();
+                self.update_sql_completions();
             }
             KeyCode::Left => {
                 self.input.move_left();
+                self.update_sql_completions();
             }
             KeyCode::Right => {
                 self.input.move_right();
+                self.update_sql_completions();
             }
             KeyCode::Home => {
                 self.input.move_home();
+                self.update_sql_completions();
             }
             KeyCode::End => {
                 self.input.move_end();
+                self.update_sql_completions();
             }
             KeyCode::Enter => {
                 // Enter is handled by the main event loop for submission
@@ -1193,10 +1354,19 @@ impl App {
             return;
         }
 
+        // Handle SQL completion if visible
+        if self.handle_sql_completion_key(key) {
+            return;
+        }
+
         match key.code {
-            // Exit to Normal mode
+            // Exit to Normal mode (also closes SQL completion)
             KeyCode::Esc => {
-                self.input_mode = InputMode::Normal;
+                if self.sql_completion.visible {
+                    self.sql_completion.close();
+                } else {
+                    self.input_mode = InputMode::Normal;
+                }
             }
             // Clear input with Ctrl+U
             KeyCode::Char('u')
@@ -1205,18 +1375,21 @@ impl App {
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
                 self.input.clear();
+                self.sql_completion.close();
             }
             // History navigation
             KeyCode::Up => {
                 if let Some(entry) = self.input_history.previous(&self.input.text) {
                     self.input.text = entry.to_string();
                     self.input.cursor = self.input.text.len();
+                    self.update_sql_completions();
                 }
             }
             KeyCode::Down => {
                 if let Some(entry) = self.input_history.next() {
                     self.input.text = entry.to_string();
                     self.input.cursor = self.input.text.len();
+                    self.update_sql_completions();
                 }
             }
             // Text input
@@ -1227,25 +1400,32 @@ impl App {
                     self.command_palette.open();
                 } else {
                     self.input.insert(c);
+                    self.update_sql_completions();
                 }
             }
             KeyCode::Backspace => {
                 self.input.backspace();
+                self.update_sql_completions();
             }
             KeyCode::Delete => {
                 self.input.delete();
+                self.update_sql_completions();
             }
             KeyCode::Left => {
                 self.input.move_left();
+                self.update_sql_completions();
             }
             KeyCode::Right => {
                 self.input.move_right();
+                self.update_sql_completions();
             }
             KeyCode::Home => {
                 self.input.move_home();
+                self.update_sql_completions();
             }
             KeyCode::End => {
                 self.input.move_end();
+                self.update_sql_completions();
             }
             KeyCode::Enter => {
                 // Enter is handled by the main event loop for submission

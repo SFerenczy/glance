@@ -4,7 +4,8 @@
 
 use super::app::{App, Focus};
 use super::widgets::{
-    chat, command_palette, confirm, header, help, input, query_detail, sidebar, toast,
+    chat, command_palette, confirm, header, help, input, query_detail, sidebar, sql_completion,
+    toast,
 };
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -76,6 +77,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(palette, palette_area);
     }
 
+    // Render SQL completion popup if visible
+    if app.sql_completion.visible {
+        let popup_area = sql_completion::SqlCompletionPopup::popup_area(
+            input_area,
+            app.sql_completion.items.len(),
+        );
+        let popup = sql_completion::SqlCompletionPopup::new(&app.sql_completion);
+        frame.render_widget(popup, popup_area);
+    }
+
     // Render toast notification if present
     if let Some((message, _)) = &app.toast {
         let toast_area = toast::Toast::area(area);
@@ -122,8 +133,10 @@ fn render_sidebar(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 /// Renders the input bar.
-fn render_input(frame: &mut Frame, area: Rect, app: &App) {
+fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Input;
+    // Store input area for popup positioning
+    app.input_area = Some(area);
     let widget = input::InputBar::new(
         &app.input.text,
         app.input.cursor,

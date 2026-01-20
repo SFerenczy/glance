@@ -186,6 +186,9 @@ mod tests {
                 is_processing: false,
                 message_count: 1,
                 running: true,
+                sql_completion_visible: false,
+                sql_completion_selected: 0,
+                sql_completion_count: 0,
             },
             frames: vec![
                 Frame {
