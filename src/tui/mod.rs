@@ -8,6 +8,7 @@ mod events;
 pub mod headless;
 mod history;
 pub mod orchestrator_actor;
+pub mod output_adapter;
 mod sql_autocomplete;
 mod ui;
 pub mod widgets;

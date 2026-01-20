@@ -6,6 +6,23 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+/// Helper macro to extract state_db or return an error InputResult.
+macro_rules! require_state_db {
+    ($self:expr) => {
+        match &$self.state_db {
+            Some(db) => Arc::clone(db),
+            None => {
+                return Ok(InputResult::Messages(
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
+                    None,
+                ))
+            }
+        }
+    };
+}
+
 use crate::commands::{
     handlers::{
         connection, history, llm_settings, queries,
@@ -348,73 +365,31 @@ impl Orchestrator {
                 return self.handle_connect(&name).await;
             }
             Command::ConnectionAdd(args) => {
-                let state_db = match &self.state_db {
-                    Some(db) => Arc::clone(db),
-                    None => {
-                        return Ok(self.command_result_to_input_result(CommandResult::error(
-                            "State database not available.",
-                        )))
-                    }
-                };
+                let state_db = require_state_db!(self);
                 connection::handle_conn_add(&args, &state_db).await
             }
             Command::ConnectionEdit(args) => {
-                let state_db = match &self.state_db {
-                    Some(db) => Arc::clone(db),
-                    None => {
-                        return Ok(self.command_result_to_input_result(CommandResult::error(
-                            "State database not available.",
-                        )))
-                    }
-                };
+                let state_db = require_state_db!(self);
                 connection::handle_conn_edit(&args, &state_db).await
             }
             Command::ConnectionDelete(name) => {
-                let state_db = match &self.state_db {
-                    Some(db) => Arc::clone(db),
-                    None => {
-                        return Ok(self.command_result_to_input_result(CommandResult::error(
-                            "State database not available.",
-                        )))
-                    }
-                };
+                let state_db = require_state_db!(self);
                 connection::handle_conn_delete(&name, &state_db).await
             }
             Command::History(args) => history::handle_history(&ctx, &args).await,
             Command::HistoryClear => history::handle_history_clear(&ctx).await,
             Command::SaveQuery(args) => {
-                let state_db = match &self.state_db {
-                    Some(db) => Arc::clone(db),
-                    None => {
-                        return Ok(self.command_result_to_input_result(CommandResult::error(
-                            "State database not available.",
-                        )))
-                    }
-                };
+                let state_db = require_state_db!(self);
                 queries::handle_savequery(&ctx, &args, &state_db).await
             }
             Command::QueriesList(args) => queries::handle_queries_list(&ctx, &args).await,
             Command::UseQuery(name) => {
-                let state_db = match &self.state_db {
-                    Some(db) => Arc::clone(db),
-                    None => {
-                        return Ok(self.command_result_to_input_result(CommandResult::error(
-                            "State database not available.",
-                        )))
-                    }
-                };
+                let state_db = require_state_db!(self);
                 queries::handle_usequery(&name, self.current_connection_name.as_deref(), &state_db)
                     .await
             }
             Command::QueryDelete(name) => {
-                let state_db = match &self.state_db {
-                    Some(db) => Arc::clone(db),
-                    None => {
-                        return Ok(self.command_result_to_input_result(CommandResult::error(
-                            "State database not available.",
-                        )))
-                    }
-                };
+                let state_db = require_state_db!(self);
                 queries::handle_query_delete(
                     &name,
                     self.current_connection_name.as_deref(),
@@ -426,28 +401,14 @@ impl Orchestrator {
                 return self.handle_llm_provider(&args).await;
             }
             Command::LlmModel(args) => {
-                let state_db = match &self.state_db {
-                    Some(db) => Arc::clone(db),
-                    None => {
-                        return Ok(self.command_result_to_input_result(CommandResult::error(
-                            "State database not available.",
-                        )))
-                    }
-                };
+                let state_db = require_state_db!(self);
                 llm_settings::handle_llm_model(&args, &state_db).await
             }
             Command::LlmKey(args) => {
                 return self.handle_llm_key(&args).await;
             }
             Command::LlmSettings => {
-                let state_db = match &self.state_db {
-                    Some(db) => Arc::clone(db),
-                    None => {
-                        return Ok(self.command_result_to_input_result(CommandResult::error(
-                            "State database not available.",
-                        )))
-                    }
-                };
+                let state_db = require_state_db!(self);
                 llm_settings::handle_llm_settings(&state_db).await
             }
             Command::RefreshSchema => {

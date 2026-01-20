@@ -2,6 +2,8 @@
 //!
 //! Parses user input into structured commands that can be dispatched to handlers.
 
+use super::tokenizer::{tokenize, Token};
+
 /// Arguments for connection add command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionAddArgs {
@@ -257,7 +259,7 @@ impl CommandRouter {
         }
     }
 
-    /// Parse connection add arguments.
+    /// Parse connection add arguments using the tokenizer.
     fn parse_conn_add_args(args: &str) -> Command {
         let mut name = String::new();
         let mut host = None;
@@ -268,21 +270,23 @@ impl CommandRouter {
         let mut sslmode = None;
         let mut test = false;
 
-        for part in args.split_whitespace() {
-            if let Some((key, value)) = part.split_once('=') {
-                match key {
-                    "host" => host = Some(value.to_string()),
+        let tokens = tokenize(args);
+
+        for token in tokens {
+            match token {
+                Token::KeyValue { key, value } => match key.as_str() {
+                    "host" => host = Some(value),
                     "port" => port = value.parse().unwrap_or(5432),
-                    "database" | "db" => database = Some(value.to_string()),
-                    "user" => user = Some(value.to_string()),
-                    "password" | "pwd" => password = Some(value.to_string()),
-                    "sslmode" => sslmode = Some(value.to_string()),
+                    "database" | "db" => database = Some(value),
+                    "user" => user = Some(value),
+                    "password" | "pwd" => password = Some(value),
+                    "sslmode" => sslmode = Some(value),
                     _ => {}
-                }
-            } else if part == "--test" || part == "-t" {
-                test = true;
-            } else if name.is_empty() {
-                name = part.to_string();
+                },
+                Token::LongFlag(flag) if flag == "test" => test = true,
+                Token::ShortFlag('t') => test = true,
+                Token::Word(word) if name.is_empty() => name = word,
+                _ => {}
             }
         }
 
@@ -298,7 +302,7 @@ impl CommandRouter {
         })
     }
 
-    /// Parse connection edit arguments.
+    /// Parse connection edit arguments using the tokenizer.
     fn parse_conn_edit_args(args: &str) -> Command {
         let mut name = String::new();
         let mut host = None;
@@ -308,19 +312,21 @@ impl CommandRouter {
         let mut password = None;
         let mut sslmode = None;
 
-        for part in args.split_whitespace() {
-            if let Some((key, value)) = part.split_once('=') {
-                match key {
-                    "host" => host = Some(value.to_string()),
+        let tokens = tokenize(args);
+
+        for token in tokens {
+            match token {
+                Token::KeyValue { key, value } => match key.as_str() {
+                    "host" => host = Some(value),
                     "port" => port = value.parse().ok(),
-                    "database" | "db" => database = Some(value.to_string()),
-                    "user" => user = Some(value.to_string()),
-                    "password" | "pwd" => password = Some(value.to_string()),
-                    "sslmode" => sslmode = Some(value.to_string()),
+                    "database" | "db" => database = Some(value),
+                    "user" => user = Some(value),
+                    "password" | "pwd" => password = Some(value),
+                    "sslmode" => sslmode = Some(value),
                     _ => {}
-                }
-            } else if name.is_empty() {
-                name = part.to_string();
+                },
+                Token::Word(word) if name.is_empty() => name = word,
+                _ => {}
             }
         }
 
@@ -335,37 +341,49 @@ impl CommandRouter {
         })
     }
 
-    /// Parse /history command arguments.
+    /// Parse /history command arguments using the tokenizer.
     fn parse_history_command(args: &str) -> Command {
         if args.trim() == "clear" {
             return Command::HistoryClear;
         }
 
         let mut history_args = HistoryArgs::default();
-        let mut iter = args.split_whitespace().peekable();
+        let tokens = tokenize(args);
+        let mut iter = tokens.iter().peekable();
 
-        while let Some(arg) = iter.next() {
-            match arg {
-                "--conn" => {
-                    if let Some(val) = iter.next() {
-                        history_args.connection = Some(val.to_string());
+        while let Some(token) = iter.next() {
+            match token {
+                Token::LongFlag(flag) => {
+                    // Look for the next token as the value
+                    if let Some(Token::Word(val)) = iter.peek() {
+                        match flag.as_str() {
+                            "conn" => {
+                                history_args.connection = Some(val.clone());
+                                iter.next();
+                            }
+                            "text" => {
+                                history_args.text = Some(val.clone());
+                                iter.next();
+                            }
+                            "limit" => {
+                                history_args.limit = val.parse().ok();
+                                iter.next();
+                            }
+                            "since" => {
+                                history_args.since_days = val.parse().ok();
+                                iter.next();
+                            }
+                            _ => {}
+                        }
                     }
                 }
-                "--text" => {
-                    if let Some(val) = iter.next() {
-                        history_args.text = Some(val.to_string());
-                    }
-                }
-                "--limit" => {
-                    if let Some(val) = iter.next() {
-                        history_args.limit = val.parse().ok();
-                    }
-                }
-                "--since" => {
-                    if let Some(val) = iter.next() {
-                        history_args.since_days = val.parse().ok();
-                    }
-                }
+                Token::KeyValue { key, value } => match key.as_str() {
+                    "conn" => history_args.connection = Some(value.clone()),
+                    "text" => history_args.text = Some(value.clone()),
+                    "limit" => history_args.limit = value.parse().ok(),
+                    "since" => history_args.since_days = value.parse().ok(),
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -389,31 +407,38 @@ impl CommandRouter {
         Command::SaveQuery(SaveQueryArgs { name, tags })
     }
 
-    /// Parse /queries command arguments.
+    /// Parse /queries command arguments using the tokenizer.
     fn parse_queries_command(args: &str) -> Command {
         let mut queries_args = QueriesListArgs::default();
-        let mut iter = args.split_whitespace().peekable();
+        let tokens = tokenize(args);
+        let mut iter = tokens.iter().peekable();
 
-        while let Some(arg) = iter.next() {
-            match arg {
-                "--tag" => {
-                    if let Some(val) = iter.next() {
-                        queries_args.tag = Some(val.trim_start_matches('#').to_string());
+        while let Some(token) = iter.next() {
+            match token {
+                Token::LongFlag(flag) => match flag.as_str() {
+                    "all" => queries_args.all = true,
+                    "tag" | "text" | "conn" => {
+                        if let Some(Token::Word(val)) = iter.peek() {
+                            match flag.as_str() {
+                                "tag" => {
+                                    queries_args.tag =
+                                        Some(val.trim_start_matches('#').to_string());
+                                }
+                                "text" => queries_args.text = Some(val.clone()),
+                                "conn" => queries_args.connection = Some(val.clone()),
+                                _ => {}
+                            }
+                            iter.next();
+                        }
                     }
-                }
-                "--text" => {
-                    if let Some(val) = iter.next() {
-                        queries_args.text = Some(val.to_string());
-                    }
-                }
-                "--all" => {
-                    queries_args.all = true;
-                }
-                "--conn" => {
-                    if let Some(val) = iter.next() {
-                        queries_args.connection = Some(val.to_string());
-                    }
-                }
+                    _ => {}
+                },
+                Token::KeyValue { key, value } => match key.as_str() {
+                    "tag" => queries_args.tag = Some(value.trim_start_matches('#').to_string()),
+                    "text" => queries_args.text = Some(value.clone()),
+                    "conn" => queries_args.connection = Some(value.clone()),
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -703,5 +728,39 @@ mod tests {
             CommandRouter::parse("/refresh unknown"),
             Command::Unknown(_)
         ));
+    }
+
+    #[test]
+    fn test_parse_conn_add_with_quoted_password() {
+        let cmd = CommandRouter::parse("/conn add mydb host=localhost password=\"my secret\"");
+        if let Command::ConnectionAdd(args) = cmd {
+            assert_eq!(args.name, "mydb");
+            assert_eq!(args.host, Some("localhost".to_string()));
+            assert_eq!(args.password, Some("my secret".to_string()));
+        } else {
+            panic!("Expected ConnectionAdd");
+        }
+    }
+
+    #[test]
+    fn test_parse_conn_add_with_special_chars_in_password() {
+        let cmd = CommandRouter::parse("/conn add mydb password=\"p@ss=word!\"");
+        if let Command::ConnectionAdd(args) = cmd {
+            assert_eq!(args.name, "mydb");
+            assert_eq!(args.password, Some("p@ss=word!".to_string()));
+        } else {
+            panic!("Expected ConnectionAdd");
+        }
+    }
+
+    #[test]
+    fn test_parse_conn_edit_with_quoted_password() {
+        let cmd = CommandRouter::parse("/conn edit mydb password=\"new secret\"");
+        if let Command::ConnectionEdit(args) = cmd {
+            assert_eq!(args.name, "mydb");
+            assert_eq!(args.password, Some("new secret".to_string()));
+        } else {
+            panic!("Expected ConnectionEdit");
+        }
     }
 }
