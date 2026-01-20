@@ -30,8 +30,10 @@ use std::io::{self, Stdout};
 use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tokio::sync::{mpsc, Mutex};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 /// Messages sent from the async task to the main loop.
 #[derive(Debug)]
@@ -71,6 +73,10 @@ pub struct Tui {
     event_handler: EventHandler,
     /// Flag to signal cancellation of pending operations.
     shutdown_flag: Arc<AtomicBool>,
+    /// Handle to the currently running background task (if any).
+    active_task: Option<JoinHandle<()>>,
+    /// Cancellation token for the active task.
+    cancellation_token: Option<CancellationToken>,
 }
 
 impl Tui {
@@ -88,7 +94,19 @@ impl Tui {
             terminal,
             event_handler,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
+            active_task: None,
+            cancellation_token: None,
         })
+    }
+
+    /// Cancels any active background task.
+    fn cancel_active_task(&mut self) {
+        if let Some(token) = self.cancellation_token.take() {
+            token.cancel();
+        }
+        if let Some(handle) = self.active_task.take() {
+            handle.abort();
+        }
     }
 
     /// Returns a clone of the shutdown flag for use in async tasks.
@@ -208,7 +226,7 @@ impl Tui {
     pub async fn run_with_orchestrator(
         &mut self,
         connection: Option<&ConnectionConfig>,
-        mut orchestrator: Orchestrator,
+        orchestrator: Orchestrator,
     ) -> Result<()> {
         // Set up panic hook to restore terminal on panic
         let original_hook = panic::take_hook();
@@ -224,19 +242,32 @@ impl Tui {
 
         let mut app_state = App::new(connection);
 
+        // Wrap orchestrator in Arc<Mutex> for sharing with background tasks
+        let orchestrator = Arc::new(Mutex::new(orchestrator));
+
         // Channel for async messages
         let (tx, mut rx) = mpsc::channel::<AsyncMessage>(32);
 
         let result = self
-            .run_event_loop(&mut app_state, &mut orchestrator, tx, &mut rx)
+            .run_event_loop(&mut app_state, Arc::clone(&orchestrator), tx, &mut rx)
             .await;
 
-        // Cleanup: signal shutdown and close resources
+        // Cleanup: signal shutdown and cancel any active task
         self.signal_shutdown();
+        self.cancel_active_task();
 
         // Close database connection gracefully
-        if let Err(e) = orchestrator.close().await {
-            warn!("Error closing database connection: {}", e);
+        match Arc::try_unwrap(orchestrator) {
+            Ok(mutex) => {
+                if let Err(e) = mutex.into_inner().close().await {
+                    warn!("Error closing database connection: {}", e);
+                }
+            }
+            Err(_) => {
+                // If we can't unwrap, there's still a reference somewhere
+                // This shouldn't happen after cancel_active_task, but handle gracefully
+                warn!("Could not unwrap orchestrator Arc, connection may not be closed cleanly");
+            }
         }
 
         // Restore panic hook
@@ -249,7 +280,7 @@ impl Tui {
     async fn run_event_loop(
         &mut self,
         app_state: &mut App,
-        orchestrator: &mut Orchestrator,
+        orchestrator: Arc<Mutex<Orchestrator>>,
         tx: mpsc::Sender<AsyncMessage>,
         rx: &mut mpsc::Receiver<AsyncMessage>,
     ) -> Result<()> {
@@ -288,7 +319,7 @@ impl Tui {
                         self.handle_crossterm_event(
                             event,
                             app_state,
-                            orchestrator,
+                            Arc::clone(&orchestrator),
                             tx.clone(),
                         ).await;
                     }
@@ -309,36 +340,46 @@ impl Tui {
         &mut self,
         event: crossterm::event::Event,
         app_state: &mut App,
-        orchestrator: &mut Orchestrator,
-        _tx: mpsc::Sender<AsyncMessage>,
+        orchestrator: Arc<Mutex<Orchestrator>>,
+        tx: mpsc::Sender<AsyncMessage>,
     ) {
         use crossterm::event::Event as CEvent;
 
         match event {
             CEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                // Handle confirmation dialog first
+                // Handle cancellation during processing
+                if app_state.is_processing {
+                    match key.code {
+                        KeyCode::Esc => {
+                            // Cancel the active operation
+                            self.cancel_active_task();
+                            return;
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            // Cancel the active operation (don't exit)
+                            self.cancel_active_task();
+                            return;
+                        }
+                        _ => return, // Ignore other keys while processing
+                    }
+                }
+
+                // Handle confirmation dialog
                 if app_state.has_pending_query() {
                     match key.code {
                         KeyCode::Char('y') | KeyCode::Enter => {
-                            // Confirm the query
+                            // Confirm the query - spawn as background task
                             if let Some(pending) = app_state.take_pending_query() {
                                 app_state.is_processing = true;
-                                let (messages, log_entry) =
-                                    orchestrator.confirm_query(&pending.sql).await;
-                                for msg in messages {
-                                    app_state.add_message(msg);
-                                }
-                                if let Some(entry) = log_entry {
-                                    app_state.add_query_log(entry);
-                                }
-                                app_state.is_processing = false;
+                                self.spawn_query_confirmation(pending.sql, orchestrator, tx);
                             }
                             return;
                         }
                         KeyCode::Char('n') | KeyCode::Esc => {
-                            // Cancel the query
+                            // Cancel the query - this is synchronous (no DB/LLM call)
                             app_state.clear_pending_query();
-                            app_state.add_message(orchestrator.cancel_query());
+                            let msg = orchestrator.blocking_lock().cancel_query();
+                            app_state.add_message(msg);
                             return;
                         }
                         _ => return, // Ignore other keys when dialog is shown
@@ -378,18 +419,8 @@ impl Tui {
                         app_state.add_message(app::ChatMessage::User(input.clone()));
                         app_state.is_processing = true;
 
-                        // Process input through orchestrator
-                        match orchestrator.handle_input(&input).await {
-                            Ok(result) => {
-                                self.handle_input_result(result, app_state, orchestrator)
-                                    .await;
-                            }
-                            Err(e) => {
-                                error!("Error processing input: {}", e);
-                                app_state.add_message(app::ChatMessage::Error(e.to_string()));
-                            }
-                        }
-                        app_state.is_processing = false;
+                        // Spawn background task for input processing
+                        self.spawn_input_processing(input, orchestrator, tx);
                     }
                     return;
                 }
@@ -404,17 +435,8 @@ impl Tui {
                         app_state.add_message(app::ChatMessage::User(input.clone()));
                         app_state.is_processing = true;
 
-                        match orchestrator.handle_input(&input).await {
-                            Ok(result) => {
-                                self.handle_input_result(result, app_state, orchestrator)
-                                    .await;
-                            }
-                            Err(e) => {
-                                error!("Error processing input: {}", e);
-                                app_state.add_message(app::ChatMessage::Error(e.to_string()));
-                            }
-                        }
-                        app_state.is_processing = false;
+                        // Spawn background task for input processing
+                        self.spawn_input_processing(input, orchestrator, tx);
                     }
                 }
             }
@@ -428,49 +450,69 @@ impl Tui {
         }
     }
 
-    /// Handles the result of processing user input.
-    async fn handle_input_result(
+    /// Spawns a background task to process user input.
+    fn spawn_input_processing(
         &mut self,
-        result: InputResult,
-        app_state: &mut App,
-        _orchestrator: &mut Orchestrator,
+        input: String,
+        orchestrator: Arc<Mutex<Orchestrator>>,
+        tx: mpsc::Sender<AsyncMessage>,
     ) {
-        match result {
-            InputResult::None => {}
-            InputResult::Messages(messages, log_entry) => {
-                for msg in messages {
-                    if let app::ChatMessage::Result(ref query_result) = msg {
-                        debug!("Query returned {} rows", query_result.row_count);
-                    }
-                    app_state.add_message(msg);
+        let token = CancellationToken::new();
+        self.cancellation_token = Some(token.clone());
+
+        let handle = tokio::spawn(async move {
+            // Send progress update
+            let _ = tx
+                .send(AsyncMessage::Progress(ProgressMessage::LlmStarted))
+                .await;
+
+            tokio::select! {
+                result = async {
+                    let mut orch = orchestrator.lock().await;
+                    orch.handle_input(&input).await
+                } => {
+                    let _ = tx.send(AsyncMessage::InputResult(result)).await;
                 }
-                if let Some(entry) = log_entry {
-                    app_state.add_query_log(entry);
+                _ = token.cancelled() => {
+                    let _ = tx.send(AsyncMessage::Progress(ProgressMessage::Cancelled)).await;
                 }
             }
-            InputResult::NeedsConfirmation {
-                sql,
-                classification,
-            } => {
-                app_state.set_pending_query(sql, classification);
-            }
-            InputResult::Exit => {
-                app_state.running = false;
-            }
-            InputResult::ToggleVimMode => {
-                app_state.toggle_vim_mode();
-            }
-            InputResult::ConnectionSwitch {
-                messages,
-                connection_info,
-            } => {
-                for msg in messages {
-                    app_state.add_message(msg);
+        });
+
+        self.active_task = Some(handle);
+    }
+
+    /// Spawns a background task to confirm and execute a query.
+    fn spawn_query_confirmation(
+        &mut self,
+        sql: String,
+        orchestrator: Arc<Mutex<Orchestrator>>,
+        tx: mpsc::Sender<AsyncMessage>,
+    ) {
+        let token = CancellationToken::new();
+        self.cancellation_token = Some(token.clone());
+
+        let handle = tokio::spawn(async move {
+            // Send progress update
+            let _ = tx
+                .send(AsyncMessage::Progress(ProgressMessage::DbStarted))
+                .await;
+
+            tokio::select! {
+                result = async {
+                    let mut orch = orchestrator.lock().await;
+                    orch.confirm_query(&sql).await
+                } => {
+                    let (messages, log_entry) = result;
+                    let _ = tx.send(AsyncMessage::QueryResult(messages, log_entry)).await;
                 }
-                app_state.connection_info = Some(connection_info);
-                app_state.is_connected = true;
+                _ = token.cancelled() => {
+                    let _ = tx.send(AsyncMessage::Progress(ProgressMessage::Cancelled)).await;
+                }
             }
-        }
+        });
+
+        self.active_task = Some(handle);
     }
 
     /// Handles an async message from a background task.
@@ -516,6 +558,8 @@ impl Tui {
                 }
             }
             AsyncMessage::QueryResult(messages, entry) => {
+                app_state.is_processing = false;
+                app_state.spinner = None;
                 for m in messages {
                     app_state.add_message(m);
                 }
@@ -583,4 +627,54 @@ pub async fn run_async(connection: &ConnectionConfig, llm_provider: LlmProvider)
     let mut tui = Tui::new()?;
     tui.run_with_orchestrator(Some(connection), orchestrator)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_cancellation_token_cancels_task() {
+        let token = CancellationToken::new();
+        let token_clone = token.clone();
+
+        // Spawn a task that waits for cancellation
+        let handle = tokio::spawn(async move {
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                    "completed"
+                }
+                _ = token_clone.cancelled() => {
+                    "cancelled"
+                }
+            }
+        });
+
+        // Cancel immediately
+        token.cancel();
+
+        // Task should complete with "cancelled"
+        let result = handle.await.unwrap();
+        assert_eq!(result, "cancelled");
+    }
+
+    #[tokio::test]
+    async fn test_progress_message_cancelled_variant() {
+        // Verify the Cancelled variant exists and can be matched
+        let msg = ProgressMessage::Cancelled;
+        match msg {
+            ProgressMessage::Cancelled => {}
+            _ => panic!("Expected Cancelled variant"),
+        }
+    }
+
+    #[test]
+    fn test_async_message_progress_variant() {
+        // Verify AsyncMessage can carry ProgressMessage::Cancelled
+        let msg = AsyncMessage::Progress(ProgressMessage::Cancelled);
+        match msg {
+            AsyncMessage::Progress(ProgressMessage::Cancelled) => {}
+            _ => panic!("Expected Progress(Cancelled) variant"),
+        }
+    }
 }

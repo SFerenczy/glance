@@ -140,3 +140,52 @@ fn test_headless_multiple_assertions() {
     assert!(stdout.contains(r#""passed": 3"#));
     assert!(stdout.contains(r#""failed": 0"#));
 }
+
+#[test]
+fn test_headless_is_processing_state() {
+    // Verify is_processing state can be asserted (should be false when not processing)
+    let (code, stdout, _) = run_headless(&[
+        "--headless",
+        "--mock-db",
+        "--events",
+        "assert:state:is_processing=false",
+        "--output",
+        "json",
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stdout.contains(r#""passed": 1"#));
+}
+
+#[test]
+fn test_headless_ctrl_c_exits_when_not_processing() {
+    // Ctrl+C should exit the app when not processing
+    let (code, stdout, _) = run_headless(&[
+        "--headless",
+        "--mock-db",
+        "--events",
+        "key:ctrl+c",
+        "--output",
+        "json",
+    ]);
+
+    assert_eq!(code, 0);
+    // App should have exited (running = false)
+    assert!(stdout.contains(r#""running": false"#));
+}
+
+#[test]
+fn test_headless_esc_clears_input() {
+    // Esc should clear input when not processing
+    let (code, stdout, _) = run_headless(&[
+        "--headless",
+        "--mock-db",
+        "--events",
+        "type:some text,key:esc,assert:state:input_text=",
+        "--output",
+        "json",
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stdout.contains(r#""passed": 1"#));
+}
