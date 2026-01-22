@@ -95,7 +95,10 @@ pub fn header_line(connection_info: Option<&str>) -> Line<'_> {
         .fg(Color::White)
         .add_modifier(Modifier::BOLD);
 
-    let mut spans = vec![Span::styled(format!("Glance v{}", env!("CARGO_PKG_VERSION")), style)];
+    let mut spans = vec![Span::styled(
+        format!("Glance v{}", env!("CARGO_PKG_VERSION")),
+        style,
+    )];
 
     if let Some(info) = connection_info {
         spans.push(Span::raw(" "));

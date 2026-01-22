@@ -33,9 +33,8 @@ use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
 
-use orchestrator_actor::{OrchestratorActor, OrchestratorHandle};
+use orchestrator_actor::{OrchestratorActor, OrchestratorHandle, OrchestratorResponse, RequestId};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -77,10 +76,10 @@ pub struct Tui {
     event_handler: EventHandler,
     /// Flag to signal cancellation of pending operations.
     shutdown_flag: Arc<AtomicBool>,
-    /// Handle to the currently running background task (if any).
-    active_task: Option<JoinHandle<()>>,
-    /// Cancellation token for the active task.
-    cancellation_token: Option<CancellationToken>,
+    /// Cancellation tokens for pending requests, keyed by RequestId.
+    pending_cancellations: std::collections::HashMap<RequestId, CancellationToken>,
+    /// Current queue depth from orchestrator.
+    queue_depth: usize,
 }
 
 impl Tui {
@@ -98,18 +97,23 @@ impl Tui {
             terminal,
             event_handler,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
-            active_task: None,
-            cancellation_token: None,
+            pending_cancellations: std::collections::HashMap::new(),
+            queue_depth: 0,
         })
     }
 
-    /// Cancels any active background task.
-    fn cancel_active_task(&mut self) {
-        if let Some(token) = self.cancellation_token.take() {
+    /// Cancels all pending requests.
+    fn cancel_all_pending(&mut self) {
+        for (_, token) in self.pending_cancellations.drain() {
             token.cancel();
         }
-        if let Some(handle) = self.active_task.take() {
-            handle.abort();
+    }
+
+    /// Cancels a specific pending request by ID.
+    #[allow(dead_code)]
+    fn cancel_request(&mut self, id: RequestId) {
+        if let Some(token) = self.pending_cancellations.remove(&id) {
+            token.cancel();
         }
     }
 
@@ -246,27 +250,26 @@ impl Tui {
 
         let mut app_state = App::new(connection);
 
-        // Channel for async messages and progress updates
-        let (tx, mut rx) = mpsc::channel::<AsyncMessage>(32);
+        // Channel for progress updates and orchestrator responses
         let (progress_tx, mut progress_rx) = mpsc::channel::<ProgressMessage>(32);
+        let (response_tx, mut response_rx) = mpsc::channel::<OrchestratorResponse>(32);
 
         // Spawn the orchestrator actor
-        let (handle, actor) = OrchestratorActor::spawn(orchestrator, progress_tx);
+        let (handle, actor) = OrchestratorActor::spawn(orchestrator, progress_tx, response_tx);
         let actor_task = tokio::spawn(actor.run());
 
         let result = self
             .run_event_loop(
                 &mut app_state,
                 handle.clone(),
-                tx,
-                &mut rx,
+                &mut response_rx,
                 &mut progress_rx,
             )
             .await;
 
-        // Cleanup: signal shutdown and cancel any active task
+        // Cleanup: signal shutdown and cancel all pending requests
         self.signal_shutdown();
-        self.cancel_active_task();
+        self.cancel_all_pending();
 
         // Close the actor gracefully
         if let Err(e) = handle.close().await {
@@ -289,8 +292,7 @@ impl Tui {
         &mut self,
         app_state: &mut App,
         handle: OrchestratorHandle,
-        tx: mpsc::Sender<AsyncMessage>,
-        rx: &mut mpsc::Receiver<AsyncMessage>,
+        response_rx: &mut mpsc::Receiver<OrchestratorResponse>,
         progress_rx: &mut mpsc::Receiver<ProgressMessage>,
     ) -> Result<()> {
         loop {
@@ -329,14 +331,13 @@ impl Tui {
                             event,
                             app_state,
                             handle.clone(),
-                            tx.clone(),
                         ).await;
                     }
                 }
 
-                // Handle async messages from background tasks
-                Some(msg) = rx.recv() => {
-                    self.handle_async_message(msg, app_state);
+                // Handle orchestrator responses
+                Some(response) = response_rx.recv() => {
+                    self.handle_orchestrator_response(response, app_state);
                 }
 
                 // Handle progress messages from the actor
@@ -355,7 +356,6 @@ impl Tui {
         event: crossterm::event::Event,
         app_state: &mut App,
         handle: OrchestratorHandle,
-        tx: mpsc::Sender<AsyncMessage>,
     ) {
         use crossterm::event::Event as CEvent;
 
@@ -365,13 +365,14 @@ impl Tui {
                 if app_state.is_processing {
                     match key.code {
                         KeyCode::Esc => {
-                            // Cancel the active operation
-                            self.cancel_active_task();
+                            // Cancel the current operation
+                            let _ = handle.cancel_current().await;
                             return;
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            // Cancel the active operation (don't exit)
-                            self.cancel_active_task();
+                            // Cancel all operations (don't exit)
+                            let _ = handle.cancel_all().await;
+                            self.cancel_all_pending();
                             return;
                         }
                         _ => return, // Ignore other keys while processing
@@ -382,23 +383,20 @@ impl Tui {
                 if app_state.has_pending_query() {
                     match key.code {
                         KeyCode::Char('y') | KeyCode::Enter => {
-                            // Confirm the query - spawn as background task
+                            // Confirm the query - submit to queue
                             if let Some(pending) = app_state.take_pending_query() {
+                                let id = RequestId::new();
+                                let token = CancellationToken::new();
+                                self.pending_cancellations.insert(id, token.clone());
                                 app_state.is_processing = true;
-                                self.spawn_query_confirmation(pending.sql, handle.clone(), tx);
+                                let _ = handle.confirm_query(id, pending.sql, token).await;
                             }
                             return;
                         }
                         KeyCode::Char('n') | KeyCode::Esc => {
-                            // Cancel the query via actor (async but fast)
+                            // Cancel the pending query
                             app_state.clear_pending_query();
-                            if let Ok(msg) = handle.cancel_query().await {
-                                app_state.add_message(msg);
-                            } else {
-                                app_state.add_message(app::ChatMessage::System(
-                                    "Query cancelled.".to_string(),
-                                ));
-                            }
+                            let _ = handle.cancel_pending_query().await;
                             return;
                         }
                         _ => return, // Ignore other keys when dialog is shown
@@ -440,8 +438,11 @@ impl Tui {
                         app_state.add_message(app::ChatMessage::User(input.clone()));
                         app_state.is_processing = true;
 
-                        // Spawn background task for input processing
-                        self.spawn_input_processing(input, handle.clone(), tx);
+                        // Submit to orchestrator queue
+                        let id = RequestId::new();
+                        let token = CancellationToken::new();
+                        self.pending_cancellations.insert(id, token.clone());
+                        let _ = handle.process_input(id, input, token).await;
                     }
                     return;
                 }
@@ -456,8 +457,11 @@ impl Tui {
                         app_state.add_message(app::ChatMessage::User(input.clone()));
                         app_state.is_processing = true;
 
-                        // Spawn background task for input processing
-                        self.spawn_input_processing(input, handle.clone(), tx);
+                        // Submit to orchestrator queue
+                        let id = RequestId::new();
+                        let token = CancellationToken::new();
+                        self.pending_cancellations.insert(id, token.clone());
+                        let _ = handle.process_input(id, input, token).await;
                     }
                 }
             }
@@ -471,59 +475,28 @@ impl Tui {
         }
     }
 
-    /// Spawns a background task to process user input.
-    fn spawn_input_processing(
+    /// Handles an orchestrator response.
+    fn handle_orchestrator_response(
         &mut self,
-        input: String,
-        handle: OrchestratorHandle,
-        tx: mpsc::Sender<AsyncMessage>,
+        response: OrchestratorResponse,
+        app_state: &mut App,
     ) {
-        let token = CancellationToken::new();
-        self.cancellation_token = Some(token.clone());
-
-        let task = tokio::spawn(async move {
-            // The actor sends progress updates via its own channel
-            let result = handle.handle_input(input, token).await;
-            let _ = tx.send(AsyncMessage::InputResult(result)).await;
-        });
-
-        self.active_task = Some(task);
-    }
-
-    /// Spawns a background task to confirm and execute a query.
-    fn spawn_query_confirmation(
-        &mut self,
-        sql: String,
-        handle: OrchestratorHandle,
-        tx: mpsc::Sender<AsyncMessage>,
-    ) {
-        let token = CancellationToken::new();
-        self.cancellation_token = Some(token.clone());
-
-        let task = tokio::spawn(async move {
-            // The actor sends progress updates via its own channel
-            match handle.confirm_query(sql, token).await {
-                Ok((messages, log_entry)) => {
-                    let _ = tx
-                        .send(AsyncMessage::QueryResult(messages, log_entry))
-                        .await;
-                }
-                Err(e) => {
-                    let _ = tx.send(AsyncMessage::InputResult(Err(e))).await;
-                }
+        match response {
+            OrchestratorResponse::Queued { id, position } => {
+                // Request was queued - could show queue position in UI
+                tracing::debug!("Request {} queued at position {}", id, position);
             }
-        });
+            OrchestratorResponse::Started { id } => {
+                // Request started processing
+                tracing::debug!("Request {} started", id);
+            }
+            OrchestratorResponse::Completed { id, result } => {
+                // Remove from pending cancellations
+                self.pending_cancellations.remove(&id);
+                app_state.is_processing = self.has_pending_requests();
 
-        self.active_task = Some(task);
-    }
-
-    /// Handles an async message from a background task.
-    fn handle_async_message(&mut self, msg: AsyncMessage, app_state: &mut App) {
-        match msg {
-            AsyncMessage::InputResult(result) => {
-                app_state.is_processing = false;
                 match result {
-                    Ok(InputResult::Messages(messages, log_entry)) => {
+                    InputResult::Messages(messages, log_entry) => {
                         for m in messages {
                             app_state.add_message(m);
                         }
@@ -531,23 +504,23 @@ impl Tui {
                             app_state.add_query_log(entry);
                         }
                     }
-                    Ok(InputResult::NeedsConfirmation {
+                    InputResult::NeedsConfirmation {
                         sql,
                         classification,
-                    }) => {
+                    } => {
                         app_state.set_pending_query(sql, classification);
                     }
-                    Ok(InputResult::Exit) => {
+                    InputResult::Exit => {
                         app_state.running = false;
                     }
-                    Ok(InputResult::ToggleVimMode) => {
+                    InputResult::ToggleVimMode => {
                         app_state.toggle_vim_mode();
                     }
-                    Ok(InputResult::ConnectionSwitch {
+                    InputResult::ConnectionSwitch {
                         messages,
                         connection_info,
                         schema,
-                    }) => {
+                    } => {
                         for m in messages {
                             app_state.add_message(m);
                         }
@@ -555,32 +528,79 @@ impl Tui {
                         app_state.is_connected = true;
                         app_state.schema = Some(schema);
                     }
-                    Ok(InputResult::SchemaRefresh { messages, schema }) => {
+                    InputResult::SchemaRefresh { messages, schema } => {
                         for m in messages {
                             app_state.add_message(m);
                         }
                         app_state.schema = Some(schema);
                     }
-                    Ok(InputResult::None) => {}
-                    Err(e) => {
-                        app_state.add_message(app::ChatMessage::Error(e.to_string()));
-                    }
+                    InputResult::None => {}
                 }
             }
-            AsyncMessage::QueryResult(messages, entry) => {
-                app_state.is_processing = false;
+            OrchestratorResponse::QueryCompleted {
+                id,
+                messages,
+                log_entry,
+            } => {
+                // Remove from pending cancellations
+                self.pending_cancellations.remove(&id);
+                app_state.is_processing = self.has_pending_requests();
                 app_state.spinner = None;
+
                 for m in messages {
                     app_state.add_message(m);
                 }
-                if let Some(e) = entry {
-                    app_state.add_query_log(e);
+                if let Some(entry) = log_entry {
+                    app_state.add_query_log(entry);
                 }
             }
-            AsyncMessage::Progress(progress) => {
-                self.handle_progress_message(progress, app_state);
+            OrchestratorResponse::Failed { id, error } => {
+                // Remove from pending cancellations
+                self.pending_cancellations.remove(&id);
+                app_state.is_processing = self.has_pending_requests();
+                app_state.spinner = None;
+
+                app_state.add_message(app::ChatMessage::Error(error));
+            }
+            OrchestratorResponse::Cancelled { id } => {
+                // Remove from pending cancellations
+                self.pending_cancellations.remove(&id);
+                app_state.is_processing = self.has_pending_requests();
+                app_state.spinner = None;
+
+                app_state.add_message(app::ChatMessage::System("Operation cancelled.".to_string()));
+            }
+            OrchestratorResponse::NeedsConfirmation {
+                id: _,
+                sql,
+                classification,
+            } => {
+                // Show confirmation dialog
+                app_state.set_pending_query(sql, classification);
+            }
+            OrchestratorResponse::QueueUpdate {
+                queue_depth,
+                current: _,
+            } => {
+                self.queue_depth = queue_depth;
+                // Could update UI to show queue depth
+            }
+            OrchestratorResponse::QueueFull { id } => {
+                // Remove from pending cancellations since it wasn't queued
+                self.pending_cancellations.remove(&id);
+                app_state.add_message(app::ChatMessage::Error(
+                    "Queue is full. Please wait for pending requests to complete.".to_string(),
+                ));
+            }
+            OrchestratorResponse::PendingQueryCancelled { message } => {
+                app_state.add_message(message);
             }
         }
+    }
+
+    /// Returns true if there are pending requests.
+    fn has_pending_requests(&self) -> bool {
+        !self.pending_cancellations.is_empty()
     }
 
     /// Handles a progress message from the orchestrator actor.

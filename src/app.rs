@@ -46,7 +46,7 @@ use crate::safety::{classify_sql, ClassificationResult, SafetyLevel};
 use crate::tui::app::{ChatMessage, QueryLogEntry, QuerySource};
 
 /// Result of processing user input.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InputResult {
     /// No action needed (empty input, etc.)
     None,
