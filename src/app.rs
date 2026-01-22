@@ -123,22 +123,29 @@ impl Orchestrator {
         }
     }
 
-    /// Creates an LLM client using the persisted API key (with env var fallback).
+    /// Creates an LLM client using persisted settings (with env var fallback).
     async fn create_llm_client(
         provider: LlmProvider,
         state_db: Option<&Arc<StateDb>>,
     ) -> Result<Box<dyn LlmClient>> {
-        // Try to get API key from persistence first
-        let persisted_key = if let Some(db) = state_db {
+        // Try to get settings from persistence first
+        let (persisted_key, persisted_model) = if let Some(db) = state_db {
             let settings = persistence::llm_settings::get_llm_settings(db.pool()).await?;
-            persistence::llm_settings::get_api_key(db.pool(), &settings.provider, db.secrets())
-                .await?
+            let key =
+                persistence::llm_settings::get_api_key(db.pool(), &settings.provider, db.secrets())
+                    .await?;
+            let model = if settings.model.is_empty() {
+                None
+            } else {
+                Some(settings.model)
+            };
+            (key, model)
         } else {
-            None
+            (None, None)
         };
 
         // Delegate to LLM layer factory
-        crate::llm::create_client(provider, persisted_key)
+        crate::llm::create_client(provider, persisted_key, persisted_model)
     }
 
     /// Rebuilds the LLM client with current settings from persistence.
