@@ -116,37 +116,13 @@ impl Orchestrator {
         }
     }
 
-    /// Creates an LLM client using persisted settings (with env var fallback).
-    async fn create_llm_client(
-        provider: LlmProvider,
-        state_db: Option<&Arc<StateDb>>,
-    ) -> Result<Box<dyn LlmClient>> {
-        // Try to get settings from persistence first
-        let (persisted_key, persisted_model) = if let Some(db) = state_db {
-            let settings = persistence::llm_settings::get_llm_settings(db.pool()).await?;
-            let key =
-                persistence::llm_settings::get_api_key(db.pool(), &settings.provider, db.secrets())
-                    .await?;
-            let model = if settings.model.is_empty() {
-                None
-            } else {
-                Some(settings.model)
-            };
-            (key, model)
-        } else {
-            (None, None)
-        };
-
-        // Delegate to LLM layer factory
-        crate::llm::create_client(provider, persisted_key, persisted_model)
-    }
-
     /// Rebuilds the LLM client with current settings from persistence.
     async fn rebuild_llm_client(&mut self) -> Result<()> {
         if let Some(ref state_db) = self.state_db {
             let settings = persistence::llm_settings::get_llm_settings(state_db.pool()).await?;
             let provider = settings.provider.parse::<LlmProvider>().unwrap_or_default();
-            let client = Self::create_llm_client(provider, Some(state_db)).await?;
+            let client =
+                crate::llm::create_client_from_persistence(provider, Some(state_db)).await?;
             self.llm_service.set_client(client);
         }
         Ok(())
@@ -164,7 +140,7 @@ impl Orchestrator {
         let state_db = StateDb::open_default().await.ok().map(Arc::new);
 
         // Create LLM client (using persisted key if available)
-        let llm = Self::create_llm_client(llm_provider, state_db.as_ref()).await?;
+        let llm = crate::llm::create_client_from_persistence(llm_provider, state_db.as_ref()).await?;
 
         Ok(Self {
             db: Some(db),

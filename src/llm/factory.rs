@@ -2,7 +2,10 @@
 //!
 //! Centralizes provider-specific logic for creating LLM clients.
 
+use std::sync::Arc;
+
 use crate::error::{GlanceError, Result};
+use crate::persistence::{self, StateDb};
 use crate::llm::{
     AnthropicClient, AnthropicConfig, LlmClient, LlmProvider, MockLlmClient, OllamaClient,
     OllamaConfig, OpenAiClient, OpenAiConfig,
@@ -68,6 +71,38 @@ pub fn create_client(
         }
         LlmProvider::Mock => Ok(Box::new(MockLlmClient::new())),
     }
+}
+
+/// Creates an LLM client using settings from persistence.
+///
+/// This is the primary entry point for creating LLM clients in the application.
+/// It encapsulates all persistence lookup logic, keeping the orchestrator simple.
+///
+/// Resolution order:
+/// 1. Load provider and model from persistence (or use defaults)
+/// 2. Load API key from persistence (keyring or plaintext)
+/// 3. Fall back to environment variables if persistence has no key
+/// 4. Delegate to `create_client` for actual client construction
+pub async fn create_client_from_persistence(
+    provider: LlmProvider,
+    state_db: Option<&Arc<StateDb>>,
+) -> Result<Box<dyn LlmClient>> {
+    let (persisted_key, persisted_model) = if let Some(db) = state_db {
+        let settings = persistence::llm_settings::get_llm_settings(db.pool()).await?;
+        let key =
+            persistence::llm_settings::get_api_key(db.pool(), &settings.provider, db.secrets())
+                .await?;
+        let model = if settings.model.is_empty() {
+            None
+        } else {
+            Some(settings.model)
+        };
+        (key, model)
+    } else {
+        (None, None)
+    };
+
+    create_client(provider, persisted_key, persisted_model)
 }
 
 #[cfg(test)]

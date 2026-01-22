@@ -17,7 +17,7 @@ pub mod tools;
 pub mod types;
 
 pub use anthropic::{AnthropicClient, AnthropicConfig};
-pub use factory::create_client;
+pub use factory::{create_client, create_client_from_persistence};
 pub use mock::MockLlmClient;
 pub use ollama::{OllamaClient, OllamaConfig};
 pub use openai::{OpenAiClient, OpenAiConfig};
