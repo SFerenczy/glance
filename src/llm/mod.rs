@@ -23,11 +23,11 @@ pub use ollama::{OllamaClient, OllamaConfig};
 pub use openai::{OpenAiClient, OpenAiConfig};
 pub use parser::{parse_llm_response, ParsedResponse};
 pub use prompt::{build_messages, build_messages_cached, build_system_prompt, PromptCache};
+pub use service::{LlmResult, LlmService, ToolContext};
 pub use tools::{
     format_saved_queries_for_llm, get_tool_definitions, ListSavedQueriesInput, SavedQueryOutput,
     ToolDefinition,
 };
-pub use service::{LlmResult, LlmService, ToolContext};
 pub use types::{Conversation, LlmResponse, Message, Role, ToolCall, ToolResult};
 
 use async_trait::async_trait;

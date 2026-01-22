@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::db::{DatabaseClient, QueryResult};
 use crate::error::{GlanceError, Result};
-use crate::persistence::{self, QueryStatus, StateDb, SubmittedBy};
+use crate::persistence::{self, OwnedRecordQueryParams, QueryStatus, StateDb, SubmittedBy};
 use crate::safety::{classify_sql, ClassificationResult, SafetyLevel};
 use crate::tui::app::{QueryLogEntry, QuerySource};
 
@@ -80,19 +80,20 @@ impl<'a> QueryExecutor<'a> {
         };
 
         if let Some(state_db) = self.state_db {
-            let conn_name = self.connection_name.unwrap_or("default");
-            let _ = persistence::history::record_query(
-                state_db.pool(),
-                conn_name,
-                SubmittedBy::User,
-                sql,
+            let pool = state_db.pool().clone();
+            let params = OwnedRecordQueryParams {
+                connection_name: self.connection_name.unwrap_or("default").to_string(),
+                submitted_by: SubmittedBy::User,
+                sql: sql.to_string(),
                 status,
-                Some(execution_time.as_millis() as i64),
+                execution_time_ms: Some(execution_time.as_millis() as i64),
                 row_count,
-                error_msg.as_deref(),
-                None,
-            )
-            .await;
+                error_message: error_msg,
+                saved_query_id: None,
+            };
+            tokio::spawn(async move {
+                let _ = persistence::history::record_query_owned(&pool, params).await;
+            });
         }
 
         let log_entry = match &result {

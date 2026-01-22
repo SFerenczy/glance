@@ -5,11 +5,11 @@
 use std::sync::Arc;
 
 use crate::error::{GlanceError, Result};
-use crate::persistence::{self, StateDb};
 use crate::llm::{
     AnthropicClient, AnthropicConfig, LlmClient, LlmProvider, MockLlmClient, OllamaClient,
     OllamaConfig, OpenAiClient, OpenAiConfig,
 };
+use crate::persistence::{self, StateDb};
 
 /// Creates an LLM client for the given provider.
 ///

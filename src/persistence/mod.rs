@@ -13,7 +13,7 @@ mod secrets;
 #[allow(unused_imports)]
 pub use connections::{ConnectionProfile, PasswordStorage};
 #[allow(unused_imports)]
-pub use history::{HistoryEntry, HistoryFilter, QueryStatus, SubmittedBy};
+pub use history::{HistoryEntry, HistoryFilter, OwnedRecordQueryParams, QueryStatus, SubmittedBy};
 #[allow(unused_imports)]
 pub use llm_settings::LlmSettings;
 #[allow(unused_imports)]
@@ -111,8 +111,8 @@ impl StateDb {
             .create_if_missing(true);
 
         SqlitePoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(Duration::from_secs(10))
+            .max_connections(4)
+            .acquire_timeout(Duration::from_secs(5))
             .connect_with(options)
             .await
             .map_err(|e| {
@@ -186,7 +186,7 @@ impl StateDb {
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
 
         let pool = SqlitePoolOptions::new()
-            .max_connections(1)
+            .max_connections(4)
             .connect_with(options)
             .await
             .map_err(|e| {

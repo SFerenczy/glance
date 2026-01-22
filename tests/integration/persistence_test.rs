@@ -2,8 +2,10 @@
 
 use db_glance::db::DatabaseBackend;
 use db_glance::persistence::{
-    self, ConnectionProfile, HistoryFilter, QueryStatus, SavedQueryFilter, StateDb, SubmittedBy,
+    self, ConnectionProfile, HistoryFilter, OwnedRecordQueryParams, QueryStatus, SavedQueryFilter,
+    StateDb, SubmittedBy,
 };
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
 async fn create_test_db() -> StateDb {
@@ -272,6 +274,160 @@ async fn test_duplicate_connection_rejected() {
         persistence::connections::create_connection(db.pool(), &profile, None, db.secrets()).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("already exists"));
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_concurrent_read_access() {
+    let db = StateDb::open_in_memory().await.unwrap();
+
+    let profile = ConnectionProfile {
+        name: "concurrent_conn".to_string(),
+        backend: DatabaseBackend::default(),
+        database: "concurrentdb".to_string(),
+        host: None,
+        port: 5432,
+        username: None,
+        sslmode: None,
+        extras: None,
+        password_storage: persistence::connections::PasswordStorage::None,
+        created_at: String::new(),
+        updated_at: String::new(),
+        last_used_at: None,
+    };
+    persistence::connections::create_connection(db.pool(), &profile, None, db.secrets())
+        .await
+        .unwrap();
+
+    for i in 0..5 {
+        persistence::history::record_query(
+            db.pool(),
+            "concurrent_conn",
+            SubmittedBy::User,
+            &format!("SELECT {}", i),
+            QueryStatus::Success,
+            Some(10),
+            Some(1),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let pool = db.pool().clone();
+            tokio::spawn(async move {
+                persistence::history::list_history(&pool, &HistoryFilter::default()).await
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        let result = handle.await.unwrap();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 5);
+    }
+
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_write_doesnt_block_reads_excessively() {
+    let db = StateDb::open_in_memory().await.unwrap();
+
+    let profile = ConnectionProfile {
+        name: "blocking_conn".to_string(),
+        backend: DatabaseBackend::default(),
+        database: "blockingdb".to_string(),
+        host: None,
+        port: 5432,
+        username: None,
+        sslmode: None,
+        extras: None,
+        password_storage: persistence::connections::PasswordStorage::None,
+        created_at: String::new(),
+        updated_at: String::new(),
+        last_used_at: None,
+    };
+    persistence::connections::create_connection(db.pool(), &profile, None, db.secrets())
+        .await
+        .unwrap();
+
+    let write_pool = db.pool().clone();
+    let write_handle = tokio::spawn(async move {
+        persistence::history::record_query(
+            &write_pool,
+            "blocking_conn",
+            SubmittedBy::User,
+            "SELECT 1",
+            QueryStatus::Success,
+            Some(10),
+            Some(1),
+            None,
+            None,
+        )
+        .await
+    });
+
+    let start = Instant::now();
+    let _ = persistence::history::list_history(db.pool(), &HistoryFilter::default()).await;
+    assert!(
+        start.elapsed() < Duration::from_millis(500),
+        "Read took too long: {:?}",
+        start.elapsed()
+    );
+
+    write_handle.await.unwrap().unwrap();
+    db.close().await;
+}
+
+#[tokio::test]
+async fn test_record_query_owned() {
+    let db = StateDb::open_in_memory().await.unwrap();
+
+    let profile = ConnectionProfile {
+        name: "owned_conn".to_string(),
+        backend: DatabaseBackend::default(),
+        database: "owneddb".to_string(),
+        host: None,
+        port: 5432,
+        username: None,
+        sslmode: None,
+        extras: None,
+        password_storage: persistence::connections::PasswordStorage::None,
+        created_at: String::new(),
+        updated_at: String::new(),
+        last_used_at: None,
+    };
+    persistence::connections::create_connection(db.pool(), &profile, None, db.secrets())
+        .await
+        .unwrap();
+
+    let params = OwnedRecordQueryParams {
+        connection_name: "owned_conn".to_string(),
+        submitted_by: SubmittedBy::User,
+        sql: "SELECT * FROM test".to_string(),
+        status: QueryStatus::Success,
+        execution_time_ms: Some(42),
+        row_count: Some(10),
+        error_message: None,
+        saved_query_id: None,
+    };
+
+    let id = persistence::history::record_query_owned(db.pool(), params)
+        .await
+        .unwrap();
+    assert!(id > 0);
+
+    let entries = persistence::history::list_history(db.pool(), &HistoryFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].sql, "SELECT * FROM test");
+    assert_eq!(entries[0].execution_time_ms, Some(42));
 
     db.close().await;
 }

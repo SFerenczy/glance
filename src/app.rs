@@ -140,7 +140,8 @@ impl Orchestrator {
         let state_db = StateDb::open_default().await.ok().map(Arc::new);
 
         // Create LLM client (using persisted key if available)
-        let llm = crate::llm::create_client_from_persistence(llm_provider, state_db.as_ref()).await?;
+        let llm =
+            crate::llm::create_client_from_persistence(llm_provider, state_db.as_ref()).await?;
 
         Ok(Self {
             db: Some(db),
@@ -589,9 +590,10 @@ impl Orchestrator {
                     _ => Ok(InputResult::Messages(result_messages, None)),
                 }
             }
-            LlmResult::Explanation(text) => {
-                Ok(InputResult::Messages(vec![ChatMessage::Assistant(text)], None))
-            }
+            LlmResult::Explanation(text) => Ok(InputResult::Messages(
+                vec![ChatMessage::Assistant(text)],
+                None,
+            )),
         }
     }
 

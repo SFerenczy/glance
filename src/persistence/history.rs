@@ -131,6 +131,19 @@ pub struct RecordQueryParams<'a> {
     pub saved_query_id: Option<i64>,
 }
 
+/// Owned parameters for recording a query execution (for background tasks).
+#[derive(Debug, Clone)]
+pub struct OwnedRecordQueryParams {
+    pub connection_name: String,
+    pub submitted_by: SubmittedBy,
+    pub sql: String,
+    pub status: QueryStatus,
+    pub execution_time_ms: Option<i64>,
+    pub row_count: Option<i64>,
+    pub error_message: Option<String>,
+    pub saved_query_id: Option<i64>,
+}
+
 /// Records a new query execution in history.
 #[allow(clippy::too_many_arguments)]
 pub async fn record_query(
@@ -168,6 +181,25 @@ pub async fn record_query(
     prune_old_entries(pool).await?;
 
     Ok(id)
+}
+
+/// Records a new query execution in history using owned parameters.
+///
+/// This variant is designed for use in background tasks where data ownership
+/// must be transferred to the spawned task.
+pub async fn record_query_owned(pool: &SqlitePool, params: OwnedRecordQueryParams) -> Result<i64> {
+    record_query(
+        pool,
+        &params.connection_name,
+        params.submitted_by,
+        &params.sql,
+        params.status,
+        params.execution_time_ms,
+        params.row_count,
+        params.error_message.as_deref(),
+        params.saved_query_id,
+    )
+    .await
 }
 
 /// Prunes history entries beyond retention limits.
