@@ -39,13 +39,9 @@ use crate::config::ConnectionConfig;
 use crate::db::{DatabaseClient, QueryResult, Schema};
 use crate::error::{GlanceError, Result};
 use crate::llm::{
-    build_messages_cached, format_saved_queries_for_llm, get_tool_definitions, parse_llm_response,
-    Conversation, ListSavedQueriesInput, LlmClient, LlmProvider, LlmResponse, MockLlmClient,
-    PromptCache, ToolResult,
+    Conversation, LlmClient, LlmProvider, LlmResult, LlmService, MockLlmClient, ToolContext,
 };
-use crate::persistence::{
-    self, QueryStatus, SavedQueryFilter, SecretStorageStatus, StateDb, SubmittedBy,
-};
+use crate::persistence::{self, QueryStatus, SecretStorageStatus, StateDb, SubmittedBy};
 use crate::safety::{classify_sql, ClassificationResult, SafetyLevel};
 use crate::tui::app::{ChatMessage, QueryLogEntry, QuerySource};
 
@@ -87,8 +83,8 @@ pub enum InputResult {
 pub struct Orchestrator {
     /// Database client for executing queries.
     db: Option<Box<dyn DatabaseClient>>,
-    /// LLM client for generating SQL from natural language.
-    llm: Box<dyn LlmClient>,
+    /// LLM service for NL→SQL conversion.
+    llm_service: LlmService,
     /// Database schema for LLM context.
     schema: Schema,
     /// Conversation history for LLM context.
@@ -99,8 +95,6 @@ pub struct Orchestrator {
     current_connection_name: Option<String>,
     /// Last executed SQL (for /savequery).
     last_executed_sql: Option<String>,
-    /// Cache for formatted schema prompts.
-    prompt_cache: PromptCache,
 }
 
 impl Orchestrator {
@@ -113,13 +107,12 @@ impl Orchestrator {
     ) -> Self {
         Self {
             db,
-            llm,
+            llm_service: LlmService::new(llm),
             schema,
             conversation: Conversation::new(),
             state_db: None,
             current_connection_name: None,
             last_executed_sql: None,
-            prompt_cache: PromptCache::new(),
         }
     }
 
@@ -153,7 +146,8 @@ impl Orchestrator {
         if let Some(ref state_db) = self.state_db {
             let settings = persistence::llm_settings::get_llm_settings(state_db.pool()).await?;
             let provider = settings.provider.parse::<LlmProvider>().unwrap_or_default();
-            self.llm = Self::create_llm_client(provider, Some(state_db)).await?;
+            let client = Self::create_llm_client(provider, Some(state_db)).await?;
+            self.llm_service.set_client(client);
         }
         Ok(())
     }
@@ -174,13 +168,12 @@ impl Orchestrator {
 
         Ok(Self {
             db: Some(db),
-            llm,
+            llm_service: LlmService::new(llm),
             schema,
             conversation: Conversation::new(),
             state_db,
             current_connection_name: None,
             last_executed_sql: None,
-            prompt_cache: PromptCache::new(),
         })
     }
 
@@ -189,13 +182,12 @@ impl Orchestrator {
     pub fn with_mock_llm(db: Option<Box<dyn DatabaseClient>>, schema: Schema) -> Self {
         Self {
             db,
-            llm: Box::new(MockLlmClient::new()),
+            llm_service: LlmService::new(Box::new(MockLlmClient::new())),
             schema,
             state_db: None,
             current_connection_name: None,
             last_executed_sql: None,
             conversation: Conversation::new(),
-            prompt_cache: PromptCache::new(),
         }
     }
 
@@ -208,13 +200,12 @@ impl Orchestrator {
     ) -> Self {
         Self {
             db,
-            llm: Box::new(MockLlmClient::new()),
+            llm_service: LlmService::new(Box::new(MockLlmClient::new())),
             schema,
             state_db: Some(state_db),
             current_connection_name: Some("test".to_string()),
             last_executed_sql: None,
             conversation: Conversation::new(),
-            prompt_cache: PromptCache::new(),
         }
     }
 
@@ -271,13 +262,12 @@ impl Orchestrator {
 
         Self {
             db: Some(Box::new(MockDatabaseClient::new())),
-            llm: Box::new(MockLlmClient::new()),
+            llm_service: LlmService::new(Box::new(MockLlmClient::new())),
             schema,
             state_db: Some(state_db),
             current_connection_name: Some("test".to_string()),
             last_executed_sql: None,
             conversation: Conversation::new(),
-            prompt_cache: PromptCache::new(),
         }
     }
 
@@ -442,7 +432,7 @@ impl Orchestrator {
 
         let schema = db.introspect_schema().await?;
         self.schema = schema.clone();
-        self.prompt_cache.invalidate();
+        self.llm_service.invalidate_cache();
 
         Ok(InputResult::SchemaRefresh {
             messages: vec![ChatMessage::System(format!(
@@ -582,147 +572,50 @@ impl Orchestrator {
 
     /// Handles natural language input by sending it to the LLM.
     async fn handle_natural_language(&mut self, input: &str) -> Result<InputResult> {
-        // Add user message to conversation
-        self.conversation.add_user(input);
+        let tool_context = ToolContext {
+            state_db: self.state_db.as_ref(),
+            current_connection: self.current_connection_name.as_deref(),
+        };
 
-        // Build messages for LLM using cached schema prompt
-        let messages =
-            build_messages_cached(&mut self.prompt_cache, &self.schema, &self.conversation);
+        let result = self
+            .llm_service
+            .process_query(input, &self.schema, &mut self.conversation, &tool_context)
+            .await?;
 
-        // Get tool definitions
-        let tools = get_tool_definitions();
+        self.handle_llm_result(result).await
+    }
 
-        // Get LLM response with tool support
-        let mut response = self.llm.complete_with_tools(&messages, &tools).await?;
+    /// Converts an LlmResult into an InputResult, executing SQL if present.
+    async fn handle_llm_result(&mut self, result: LlmResult) -> Result<InputResult> {
+        match result {
+            LlmResult::Sql { sql, explanation } => {
+                let mut result_messages = Vec::new();
 
-        // Handle tool calls if any
-        if response.has_tool_calls() {
-            response = self.handle_tool_calls(response, &tools).await?;
-        }
-
-        // Add assistant response to conversation
-        self.conversation.add_assistant(&response.content);
-
-        // Parse the response to extract SQL
-        let parsed = parse_llm_response(&response.content);
-
-        let mut result_messages = Vec::new();
-        let mut log_entry = None;
-
-        // Add any explanatory text
-        if !parsed.text.is_empty() {
-            result_messages.push(ChatMessage::Assistant(parsed.text));
-        }
-
-        // If SQL was found, handle it (mark as Generated since it came from LLM)
-        if let Some(sql) = parsed.sql {
-            match self
-                .handle_sql_with_source(&sql, QuerySource::Generated)
-                .await?
-            {
-                InputResult::Messages(msgs, entry) => {
-                    result_messages.extend(msgs);
-                    log_entry = entry;
+                if let Some(text) = explanation {
+                    result_messages.push(ChatMessage::Assistant(text));
                 }
-                InputResult::NeedsConfirmation {
-                    sql,
-                    classification,
-                } => {
-                    return Ok(InputResult::NeedsConfirmation {
+
+                match self
+                    .handle_sql_with_source(&sql, QuerySource::Generated)
+                    .await?
+                {
+                    InputResult::Messages(msgs, log_entry) => {
+                        result_messages.extend(msgs);
+                        Ok(InputResult::Messages(result_messages, log_entry))
+                    }
+                    InputResult::NeedsConfirmation {
                         sql,
                         classification,
-                    });
+                    } => Ok(InputResult::NeedsConfirmation {
+                        sql,
+                        classification,
+                    }),
+                    _ => Ok(InputResult::Messages(result_messages, None)),
                 }
-                _ => {}
             }
-        }
-
-        Ok(InputResult::Messages(result_messages, log_entry))
-    }
-
-    /// Handles tool calls from the LLM and returns the final response.
-    async fn handle_tool_calls(
-        &mut self,
-        response: LlmResponse,
-        tools: &[crate::llm::ToolDefinition],
-    ) -> Result<LlmResponse> {
-        let mut tool_results = Vec::new();
-
-        for tool_call in &response.tool_calls {
-            let result = self
-                .execute_tool(&tool_call.name, &tool_call.arguments)
-                .await;
-            tool_results.push(ToolResult {
-                tool_call_id: tool_call.id.clone(),
-                content: result,
-            });
-        }
-
-        // Build messages (without the tool call response - that's added by the client)
-        let messages =
-            build_messages_cached(&mut self.prompt_cache, &self.schema, &self.conversation);
-
-        // Continue the conversation with tool results
-        self.llm
-            .continue_with_tool_results(&messages, &response.tool_calls, &tool_results, tools)
-            .await
-    }
-
-    /// Executes a tool and returns the result as JSON string.
-    async fn execute_tool(&self, name: &str, arguments: &str) -> String {
-        match name {
-            "list_saved_queries" => self.execute_list_saved_queries(arguments).await,
-            _ => serde_json::json!({
-                "error": format!("Unknown tool: {}", name)
-            })
-            .to_string(),
-        }
-    }
-
-    /// Executes the list_saved_queries tool.
-    async fn execute_list_saved_queries(&self, arguments: &str) -> String {
-        let state_db = match &self.state_db {
-            Some(db) => db,
-            None => {
-                return serde_json::json!({
-                    "error": "State database not available"
-                })
-                .to_string();
+            LlmResult::Explanation(text) => {
+                Ok(InputResult::Messages(vec![ChatMessage::Assistant(text)], None))
             }
-        };
-
-        // Parse the input arguments
-        let input: ListSavedQueriesInput = match serde_json::from_str(arguments) {
-            Ok(input) => input,
-            Err(_) => ListSavedQueriesInput {
-                connection_name: None,
-                tags: None,
-                text: None,
-                limit: None,
-            },
-        };
-
-        // Build filter from input
-        let filter = SavedQueryFilter {
-            connection_name: input
-                .connection_name
-                .or_else(|| self.current_connection_name.clone()),
-            include_global: true,
-            tag: input.tags.and_then(|t| t.into_iter().next()),
-            text_search: input.text,
-            limit: input.limit,
-        };
-
-        // Query saved queries
-        match persistence::saved_queries::list_saved_queries(state_db.pool(), &filter).await {
-            Ok(queries) => {
-                let output = format_saved_queries_for_llm(&queries);
-                serde_json::to_string(&output).unwrap_or_else(|_| "[]".to_string())
-            }
-            Err(e) => serde_json::json!({
-                "error": format!("Failed to list saved queries: {}", e)
-            })
-            .to_string(),
         }
     }
 

@@ -27,6 +27,7 @@ pub use tools::{
     format_saved_queries_for_llm, get_tool_definitions, ListSavedQueriesInput, SavedQueryOutput,
     ToolDefinition,
 };
+pub use service::{LlmResult, LlmService, ToolContext};
 pub use types::{Conversation, LlmResponse, Message, Role, ToolCall, ToolResult};
 
 use async_trait::async_trait;

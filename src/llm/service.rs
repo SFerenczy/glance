@@ -14,14 +14,12 @@ use super::{
 };
 
 /// LLM service that handles natural language processing and tool calls.
-#[allow(dead_code)]
 pub struct LlmService {
     client: Box<dyn LlmClient>,
     prompt_cache: PromptCache,
 }
 
 /// Context for tool execution.
-#[allow(dead_code)]
 pub struct ToolContext<'a> {
     /// State database for persistence.
     pub state_db: Option<&'a Arc<StateDb>>,
@@ -31,7 +29,6 @@ pub struct ToolContext<'a> {
 
 /// Result of LLM processing.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum LlmResult {
     /// SQL was generated, with optional explanation.
     Sql {
@@ -42,7 +39,6 @@ pub enum LlmResult {
     Explanation(String),
 }
 
-#[allow(dead_code)]
 impl LlmService {
     /// Creates a new LLM service.
     pub fn new(client: Box<dyn LlmClient>) -> Self {
@@ -194,6 +190,11 @@ impl LlmService {
     /// Replaces the LLM client (e.g., after provider change).
     pub fn set_client(&mut self, client: Box<dyn LlmClient>) {
         self.client = client;
+    }
+
+    /// Invalidates the prompt cache (e.g., after schema refresh).
+    pub fn invalidate_cache(&mut self) {
+        self.prompt_cache.invalidate();
     }
 }
 
