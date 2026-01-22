@@ -46,7 +46,7 @@ impl Widget for Header<'_> {
         }
 
         // Left side: app name and version
-        let left_text = " Glance v0.1.0";
+        let left_text = format!(" Glance v{}", env!("CARGO_PKG_VERSION"));
         let left_span = Span::styled(left_text, style);
         buf.set_span(area.x, area.y, &left_span, area.width);
 
@@ -95,7 +95,7 @@ pub fn header_line(connection_info: Option<&str>) -> Line<'_> {
         .fg(Color::White)
         .add_modifier(Modifier::BOLD);
 
-    let mut spans = vec![Span::styled("Glance v0.1.0", style)];
+    let mut spans = vec![Span::styled(format!("Glance v{}", env!("CARGO_PKG_VERSION")), style)];
 
     if let Some(info) = connection_info {
         spans.push(Span::raw(" "));
