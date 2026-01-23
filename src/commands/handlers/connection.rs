@@ -235,7 +235,9 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
 
             // Warn about plaintext password storage if keyring unavailable
             if args.password.is_some() && !state_db.secrets().is_secure() {
-                msg.push_str("\n\n⚠️  Warning: OS keyring unavailable. Password stored as plaintext.");
+                msg.push_str(
+                    "\n\n⚠️  Warning: OS keyring unavailable. Password stored as plaintext.",
+                );
             }
 
             CommandResult::system(msg)
@@ -319,7 +321,9 @@ pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>
 
             // Warn about plaintext password storage if keyring unavailable
             if args.password.is_some() && !state_db.secrets().is_secure() {
-                msg.push_str("\n\n⚠️  Warning: OS keyring unavailable. Password stored as plaintext.");
+                msg.push_str(
+                    "\n\n⚠️  Warning: OS keyring unavailable. Password stored as plaintext.",
+                );
             }
 
             CommandResult::system(msg)
@@ -329,7 +333,10 @@ pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>
 }
 
 /// Handle /conn delete command.
-pub async fn handle_conn_delete(args: &ConnectionDeleteArgs, state_db: &Arc<StateDb>) -> CommandResult {
+pub async fn handle_conn_delete(
+    args: &ConnectionDeleteArgs,
+    state_db: &Arc<StateDb>,
+) -> CommandResult {
     if args.name.is_empty() {
         return CommandResult::error("Usage: /conn delete <name> [--confirm]");
     }
@@ -353,8 +360,12 @@ pub async fn handle_conn_delete(args: &ConnectionDeleteArgs, state_db: &Arc<Stat
         ));
     }
 
-    match persistence::connections::delete_connection(state_db.pool(), &args.name, state_db.secrets())
-        .await
+    match persistence::connections::delete_connection(
+        state_db.pool(),
+        &args.name,
+        state_db.secrets(),
+    )
+    .await
     {
         Ok(()) => CommandResult::system(format!("Connection '{}' deleted.", args.name)),
         Err(e) => CommandResult::error(e.to_string()),

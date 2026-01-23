@@ -356,6 +356,13 @@ impl HeadlessRunner {
                 }
                 self.app.schema = Some(schema);
             }
+            InputResult::SetInput { content, message } => {
+                self.app.input.text = content;
+                self.app.input.cursor = self.app.input.text.len();
+                if let Some(msg) = message {
+                    self.app.add_message(msg);
+                }
+            }
         }
     }
 
@@ -403,6 +410,8 @@ pub async fn run_headless(cli: &Cli) -> Result<i32> {
     // Create orchestrator with state database if mock-db is enabled
     if cli.mock_db {
         let state_db = StateDb::open_in_memory().await?;
+        // Auto-consent to plaintext storage in headless mode (keyring unavailable in CI/tests)
+        state_db.secrets().consent_to_plaintext();
         let orchestrator = Orchestrator::for_headless_testing(Arc::new(state_db)).await;
         runner = runner.with_orchestrator(orchestrator);
     }

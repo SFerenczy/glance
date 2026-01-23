@@ -29,6 +29,7 @@ pub struct CommandContext<'a> {
     /// Last executed SQL (for /savequery).
     pub last_executed_sql: Option<&'a str>,
     /// Current input text (for /savequery when input is non-empty).
+    #[allow(dead_code)]
     pub current_input: Option<&'a str>,
 }
 

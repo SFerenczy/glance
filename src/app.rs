@@ -328,7 +328,7 @@ impl Orchestrator {
                 connection::handle_conn_delete(&args, &state_db).await
             }
             Command::History(args) => history::handle_history(&ctx, &args).await,
-            Command::HistoryClear => history::handle_history_clear(&ctx).await,
+            Command::HistoryClear { .. } => history::handle_history_clear(&ctx).await,
             Command::SaveQuery(args) => {
                 let state_db = require_state_db!(self);
                 queries::handle_savequery(&ctx, &args, &state_db).await
@@ -1201,8 +1201,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cancel_query() {
-        let orchestrator = Orchestrator::with_mock_llm(None, Schema::default());
-        let msg = orchestrator.cancel_query();
+        let mut orchestrator = Orchestrator::with_mock_llm(None, Schema::default());
+        let msg = orchestrator.cancel_query(None).await;
 
         match msg {
             ChatMessage::System(text) => {

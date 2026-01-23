@@ -681,7 +681,7 @@ mod tests {
     fn test_parse_history_clear() {
         assert!(matches!(
             CommandRouter::parse("/history clear"),
-            Command::HistoryClear
+            Command::HistoryClear { .. }
         ));
     }
 

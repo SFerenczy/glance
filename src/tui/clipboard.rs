@@ -18,6 +18,7 @@ static CLIPBOARD: Mutex<Option<Clipboard>> = Mutex::new(None);
 
 /// Detected clipboard backend for the current platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ClipboardBackend {
     /// Native clipboard via arboard (Windows, some Linux/macOS).
     Arboard,
@@ -120,6 +121,7 @@ pub fn copy(text: &str) -> Result<(), ClipboardError> {
 }
 
 /// Gets text from the clipboard using the best available backend.
+#[allow(dead_code)]
 pub fn paste() -> Result<String, ClipboardError> {
     let backend = backend().unwrap_or_else(detect_backend);
 
@@ -147,6 +149,7 @@ fn copy_arboard(text: &str) -> Result<(), ClipboardError> {
         .map_err(|e| ClipboardError::Copy(e.to_string()))
 }
 
+#[allow(dead_code)]
 fn paste_arboard() -> Result<String, ClipboardError> {
     let mut guard = CLIPBOARD.lock().map_err(|_| ClipboardError::Lock)?;
     let clipboard = guard.as_mut().ok_or(ClipboardError::NotInitialized)?;
@@ -179,6 +182,7 @@ fn copy_xclip(text: &str) -> Result<(), ClipboardError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn paste_xclip() -> Result<String, ClipboardError> {
     let output = Command::new("xclip")
         .args(["-selection", "clipboard", "-o"])
@@ -217,6 +221,7 @@ fn copy_xsel(text: &str) -> Result<(), ClipboardError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn paste_xsel() -> Result<String, ClipboardError> {
     let output = Command::new("xsel")
         .args(["--clipboard", "--output"])
@@ -254,6 +259,7 @@ fn copy_pbcopy(text: &str) -> Result<(), ClipboardError> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn paste_pbpaste() -> Result<String, ClipboardError> {
     let output = Command::new("pbpaste")
         .output()
@@ -291,6 +297,7 @@ fn copy_osc52(text: &str) -> Result<(), ClipboardError> {
 
 /// Clipboard operation errors.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ClipboardError {
     /// Failed to initialize clipboard.
     Init(String),

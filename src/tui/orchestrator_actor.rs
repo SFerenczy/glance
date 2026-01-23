@@ -703,7 +703,7 @@ mod tests {
 
         let actor_handle = tokio::spawn(actor.run());
 
-        handle.cancel_pending_query().await.unwrap();
+        handle.cancel_pending_query(None).await.unwrap();
 
         // Should receive PendingQueryCancelled response
         let resp = timeout(std::time::Duration::from_secs(1), response_rx.recv())

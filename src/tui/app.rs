@@ -368,6 +368,7 @@ pub struct App {
 
 /// A multi-line paste that may need user confirmation.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PendingPaste {
     /// The original pasted text.
     pub text: String,
@@ -481,6 +482,7 @@ impl App {
     }
 
     /// Takes and clears the cancellation request.
+    #[allow(dead_code)]
     pub fn take_cancel_request(&mut self) -> bool {
         std::mem::take(&mut self.cancel_requested)
     }
@@ -892,8 +894,7 @@ impl App {
         }
 
         // Multiple statements if more than one semicolon, or one semicolon not at the end
-        semicolon_count > 1
-            || (semicolon_count == 1 && !text.trim().ends_with(';'))
+        semicolon_count > 1 || (semicolon_count == 1 && !text.trim().ends_with(';'))
     }
 
     /// Handles pending paste confirmation (y/n).

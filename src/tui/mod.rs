@@ -565,6 +565,13 @@ impl Tui {
                         }
                         app_state.schema = Some(schema);
                     }
+                    InputResult::SetInput { content, message } => {
+                        app_state.input.text = content;
+                        app_state.input.cursor = app_state.input.text.len();
+                        if let Some(msg) = message {
+                            app_state.add_message(msg);
+                        }
+                    }
                     InputResult::None => {}
                 }
             }

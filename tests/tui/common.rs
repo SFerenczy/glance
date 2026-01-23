@@ -5,12 +5,9 @@ use std::process::Command;
 
 /// Returns the path to the glance binary.
 /// The binary is already built by `cargo test` as part of the workspace.
+/// Uses CARGO_BIN_EXE_glance which is set by cargo test to the correct path.
 fn binary_path() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("target");
-    path.push("debug");
-    path.push("glance");
-    path
+    PathBuf::from(env!("CARGO_BIN_EXE_glance"))
 }
 
 /// Run glance in headless mode with the given arguments.
