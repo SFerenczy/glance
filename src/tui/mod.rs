@@ -571,10 +571,15 @@ impl Tui {
                 app_state.add_message(app::ChatMessage::System("Operation cancelled.".to_string()));
             }
             OrchestratorResponse::NeedsConfirmation {
-                id: _,
+                id,
                 sql,
                 classification,
             } => {
+                // Remove from pending cancellations and stop processing spinner
+                // so the confirmation dialog can receive user input
+                self.pending_cancellations.remove(&id);
+                app_state.is_processing = self.has_pending_requests();
+                app_state.spinner = None;
                 // Show confirmation dialog
                 app_state.set_pending_query(sql, classification);
             }
