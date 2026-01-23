@@ -7,6 +7,7 @@
 
 pub mod anthropic;
 pub mod factory;
+pub mod manager;
 pub mod mock;
 pub mod ollama;
 pub mod openai;
@@ -21,6 +22,7 @@ pub use factory::{
     create_client, create_client_from_config, create_client_from_persistence,
     create_client_with_overrides, resolve_config, LlmConfigBuilder, RuntimeLlmConfig,
 };
+pub use manager::LlmManager;
 pub use mock::MockLlmClient;
 pub use ollama::{OllamaClient, OllamaConfig};
 pub use openai::{OpenAiClient, OpenAiConfig};
