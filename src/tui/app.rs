@@ -684,6 +684,12 @@ impl App {
 
         match event {
             Event::Key(key) => {
+                // Dismiss help overlay on any key press
+                if self.show_help {
+                    self.show_help = false;
+                    return;
+                }
+
                 match key.code {
                     // Ctrl+C: copy selection if present, otherwise exit
                     KeyCode::Char('c')
@@ -1308,8 +1314,9 @@ impl App {
     /// Loads the last executed SQL into the input field for editing.
     fn edit_last_sql(&mut self) {
         if let Some(sql) = &self.last_executed_sql.clone() {
-            self.input.text = sql.clone();
-            self.input.cursor = sql.len();
+            let prefixed = format!("/sql {}", sql);
+            self.input.text = prefixed.clone();
+            self.input.cursor = prefixed.len();
             self.input_mode = InputMode::Insert;
             self.show_toast("Loaded last SQL for editing");
         } else {
@@ -1335,7 +1342,6 @@ impl App {
     }
 
     /// Takes and clears the rerun request, returning the SQL if requested.
-    #[allow(dead_code)] // Will be used by TUI event loop
     pub fn take_rerun_request(&mut self) -> Option<String> {
         if self.rerun_requested {
             self.rerun_requested = false;

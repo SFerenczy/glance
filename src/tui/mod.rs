@@ -464,6 +464,19 @@ impl Tui {
                         let _ = handle.process_input(id, input, token).await;
                     }
                 }
+
+                // Check if rerun was requested (from 'r' key in Normal mode)
+                if let Some(sql) = app_state.take_rerun_request() {
+                    let input = format!("/sql {}", sql);
+                    app_state.add_message(app::ChatMessage::User(input.clone()));
+                    app_state.is_processing = true;
+
+                    // Submit to orchestrator queue
+                    let id = RequestId::new();
+                    let token = CancellationToken::new();
+                    self.pending_cancellations.insert(id, token.clone());
+                    let _ = handle.process_input(id, input, token).await;
+                }
             }
             CEvent::Mouse(mouse) => {
                 app_state.handle_event(Event::Mouse(mouse));
