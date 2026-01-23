@@ -341,8 +341,7 @@ impl Orchestrator {
                 return self.handle_llm_provider(&args).await;
             }
             Command::LlmModel(args) => {
-                let state_db = require_state_db!(self);
-                llm_settings::handle_llm_model(&args, &state_db).await
+                return self.handle_llm_model(&args).await;
             }
             Command::LlmKey(args) => {
                 return self.handle_llm_key(&args).await;
@@ -534,6 +533,61 @@ impl Orchestrator {
                             vec![ChatMessage::System(format!(
                                 "API key set for provider '{}': {}",
                                 provider, masked
+                            ))],
+                            None,
+                        ))
+                    }
+                    Err(e) => Ok(InputResult::Messages(
+                        vec![ChatMessage::Error(e.to_string())],
+                        None,
+                    )),
+                }
+            }
+        }
+    }
+
+    /// Handles /llm model command with LLM client rebuild.
+    async fn handle_llm_model(
+        &mut self,
+        args: &crate::commands::router::LlmModelArgs,
+    ) -> Result<InputResult> {
+        let state_db = match &self.state_db {
+            Some(db) => Arc::clone(db),
+            None => {
+                return Ok(InputResult::Messages(
+                    vec![ChatMessage::Error(
+                        "State database not available.".to_string(),
+                    )],
+                    None,
+                ))
+            }
+        };
+
+        match args {
+            crate::commands::router::LlmModelArgs::Show => {
+                let result = llm_settings::handle_llm_model(args, &state_db).await;
+                Ok(self.command_result_to_input_result(result))
+            }
+            crate::commands::router::LlmModelArgs::Set(value) => {
+                match persistence::llm_settings::set_model(state_db.pool(), value).await {
+                    Ok(()) => {
+                        self.llm_service.invalidate_cache();
+                        if let Err(e) = self.rebuild_llm_client().await {
+                            return Ok(InputResult::Messages(
+                                vec![
+                                    ChatMessage::System(format!("LLM model set to '{}'.", value)),
+                                    ChatMessage::Error(format!(
+                                        "Warning: Could not reinitialize LLM client: {}",
+                                        e
+                                    )),
+                                ],
+                                None,
+                            ));
+                        }
+                        Ok(InputResult::Messages(
+                            vec![ChatMessage::System(format!(
+                                "LLM model set to '{}'.",
+                                value
                             ))],
                             None,
                         ))
