@@ -2,6 +2,7 @@
 //!
 //! Displays the conversation history and query results.
 
+use super::spinner::Spinner;
 use super::table::ResultTable;
 use crate::tui::app::{ChatMessage, TextSelection};
 use ratatui::{
@@ -19,6 +20,7 @@ pub struct ChatPanel<'a> {
     focused: bool,
     has_new_messages: bool,
     text_selection: Option<&'a TextSelection>,
+    spinner: Option<&'a Spinner>,
 }
 
 impl<'a> ChatPanel<'a> {
@@ -29,6 +31,7 @@ impl<'a> ChatPanel<'a> {
         focused: bool,
         has_new_messages: bool,
         text_selection: Option<&'a TextSelection>,
+        spinner: Option<&'a Spinner>,
     ) -> Self {
         Self {
             messages,
@@ -36,6 +39,7 @@ impl<'a> ChatPanel<'a> {
             focused,
             has_new_messages,
             text_selection,
+            spinner,
         }
     }
 
@@ -109,7 +113,24 @@ impl<'a> ChatPanel<'a> {
             }
         }
 
+        // Add inline spinner/thinking indicator at the end if active
+        if let Some(spinner) = self.spinner {
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+            }
+            lines.extend(self.render_spinner_indicator(spinner));
+        }
+
         lines
+    }
+
+    /// Renders the inline spinner/thinking indicator.
+    fn render_spinner_indicator(&self, spinner: &Spinner) -> Vec<Line<'a>> {
+        let display = spinner.display();
+        let style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::ITALIC);
+        vec![Line::from(Span::styled(display, style))]
     }
 
     /// Renders a user message.
@@ -348,7 +369,7 @@ mod tests {
     #[test]
     fn test_chat_panel_empty() {
         let messages: Vec<ChatMessage> = vec![];
-        let panel = ChatPanel::new(&messages, 0, false, false, None);
+        let panel = ChatPanel::new(&messages, 0, false, false, None, None);
         let lines = panel.render_messages(80);
         assert!(lines.is_empty());
     }
@@ -356,7 +377,7 @@ mod tests {
     #[test]
     fn test_chat_panel_user_message() {
         let messages = vec![ChatMessage::User("Hello".to_string())];
-        let panel = ChatPanel::new(&messages, 0, false, false, None);
+        let panel = ChatPanel::new(&messages, 0, false, false, None, None);
         let lines = panel.render_messages(80);
 
         // Should have label + content
@@ -366,7 +387,7 @@ mod tests {
     #[test]
     fn test_chat_panel_multiline_message() {
         let messages = vec![ChatMessage::User("Line 1\nLine 2\nLine 3".to_string())];
-        let panel = ChatPanel::new(&messages, 0, false, false, None);
+        let panel = ChatPanel::new(&messages, 0, false, false, None, None);
         let lines = panel.render_messages(80);
 
         // Should have label + 3 content lines
@@ -384,7 +405,7 @@ mod tests {
             was_truncated: false,
         };
         let messages = vec![ChatMessage::Result(result)];
-        let panel = ChatPanel::new(&messages, 0, false, false, None);
+        let panel = ChatPanel::new(&messages, 0, false, false, None, None);
         let lines = panel.render_messages(80);
 
         // Should have table lines
@@ -397,10 +418,21 @@ mod tests {
             ChatMessage::User("Hello".to_string()),
             ChatMessage::Assistant("Hi there!".to_string()),
         ];
-        let panel = ChatPanel::new(&messages, 0, false, false, None);
+        let panel = ChatPanel::new(&messages, 0, false, false, None, None);
         let lines = panel.render_messages(80);
 
         // Should have lines for both messages plus spacing
         assert!(lines.len() >= 5); // 2 + 2 + 1 spacing
+    }
+
+    #[test]
+    fn test_chat_panel_with_spinner() {
+        let messages = vec![ChatMessage::User("Hello".to_string())];
+        let spinner = Spinner::thinking();
+        let panel = ChatPanel::new(&messages, 0, false, false, None, Some(&spinner));
+        let lines = panel.render_messages(80);
+
+        // Should have user message (2 lines) + spacing + spinner (1 line)
+        assert!(lines.len() >= 4);
     }
 }

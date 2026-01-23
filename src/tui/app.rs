@@ -351,6 +351,8 @@ pub struct App {
     pub text_selection: Option<TextSelection>,
     /// The area where the chat panel was last rendered (for mouse hit testing).
     pub chat_area: Option<ratatui::layout::Rect>,
+    /// The area where the "new messages" banner is rendered (for click detection).
+    pub banner_area: Option<ratatui::layout::Rect>,
     /// SQL completion state for /sql mode.
     pub sql_completion: SqlCompletionState,
     /// Database schema for completions.
@@ -416,6 +418,7 @@ impl App {
             vim_mode_enabled: false, // Vim mode disabled by default
             text_selection: None,
             chat_area: None,
+            banner_area: None,
             sql_completion: SqlCompletionState::new(),
             schema: None,
             input_area: None,
@@ -724,11 +727,11 @@ impl App {
                         self.handle_input_key(key);
                     }
 
-                    // Chat scrolling (when chat is focused)
-                    KeyCode::Up if self.focus == Focus::Chat => {
+                    // Chat scrolling (when chat is focused) - FR-5.1
+                    KeyCode::Up | KeyCode::Char('k') if self.focus == Focus::Chat => {
                         self.chat_scroll = self.chat_scroll.saturating_add(1);
                     }
-                    KeyCode::Down if self.focus == Focus::Chat => {
+                    KeyCode::Down | KeyCode::Char('j') if self.focus == Focus::Chat => {
                         self.chat_scroll = self.chat_scroll.saturating_sub(1);
                         if self.chat_scroll == 0 {
                             self.has_new_messages = false;
@@ -743,12 +746,32 @@ impl App {
                             self.has_new_messages = false;
                         }
                     }
-                    KeyCode::Home if self.focus == Focus::Chat => {
+                    KeyCode::Home | KeyCode::Char('g') if self.focus == Focus::Chat => {
                         self.chat_scroll = usize::MAX; // Will be clamped during render
                     }
-                    KeyCode::End if self.focus == Focus::Chat => {
+                    KeyCode::End | KeyCode::Char('G') if self.focus == Focus::Chat => {
                         self.chat_scroll = 0;
                         self.has_new_messages = false;
+                    }
+                    // Half-page scrolling with Ctrl+d/u when chat focused
+                    KeyCode::Char('d')
+                        if self.focus == Focus::Chat
+                            && key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                    {
+                        self.chat_scroll = self.chat_scroll.saturating_sub(10);
+                        if self.chat_scroll == 0 {
+                            self.has_new_messages = false;
+                        }
+                    }
+                    KeyCode::Char('u')
+                        if self.focus == Focus::Chat
+                            && key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                    {
+                        self.chat_scroll = self.chat_scroll.saturating_add(10);
                     }
 
                     // Modal handling (Esc closes modal)
@@ -790,6 +813,20 @@ impl App {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // Check if click is on the "new messages" banner (FR-5.3)
+                if let Some(banner) = self.banner_area {
+                    if mouse.column >= banner.x
+                        && mouse.column < banner.x + banner.width
+                        && mouse.row >= banner.y
+                        && mouse.row < banner.y + banner.height
+                    {
+                        // Scroll to bottom and clear new messages flag
+                        self.chat_scroll = 0;
+                        self.has_new_messages = false;
+                        return;
+                    }
+                }
+
                 // Check if click is within chat area
                 if let Some(area) = self.chat_area {
                     if mouse.column >= area.x

@@ -48,7 +48,17 @@ impl<'a> Sidebar<'a> {
     }
 
     /// Creates a list item for a query entry.
+    #[allow(dead_code)]
     fn make_list_item(entry: &QueryLogEntry, width: usize) -> ListItem<'static> {
+        Self::make_list_item_with_separator(entry, width, false)
+    }
+
+    /// Creates a list item for a query entry, optionally with a separator line above.
+    fn make_list_item_with_separator(
+        entry: &QueryLogEntry,
+        width: usize,
+        with_separator: bool,
+    ) -> ListItem<'static> {
         // Calculate available width for SQL preview
         // Account for: "▸ " (2) + status icon (2) + time + rows
         let preview_width = width.saturating_sub(4).min(30);
@@ -89,10 +99,25 @@ impl<'a> Sidebar<'a> {
         };
         let info_span = Span::styled(info_text, Style::default().fg(Color::DarkGray));
 
-        ListItem::new(vec![
-            Line::from(vec![sql_span]),
-            Line::from(vec![Span::raw("  "), source_icon, status_icon, info_span]),
-        ])
+        let mut lines = Vec::new();
+
+        // Add separator line if requested (FR-9.1)
+        if with_separator {
+            lines.push(Line::from(Span::styled(
+                "─".repeat(width.min(30)),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        lines.push(Line::from(vec![sql_span]));
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            source_icon,
+            status_icon,
+            info_span,
+        ]));
+
+        ListItem::new(lines)
     }
 }
 
@@ -123,11 +148,22 @@ impl Widget for Sidebar<'_> {
         // Calculate inner width for formatting
         let inner_width = area.width.saturating_sub(2) as usize;
 
-        // Build list items
+        // Build list items with separators between time-grouped queries (FR-9.1)
         let items: Vec<ListItem> = self
             .entries
             .iter()
-            .map(|entry| Self::make_list_item(entry, inner_width))
+            .enumerate()
+            .map(|(i, entry)| {
+                // Check if we need a separator before this entry
+                let needs_separator = if i > 0 {
+                    let prev = &self.entries[i - 1];
+                    let time_gap = prev.timestamp.duration_since(entry.timestamp).as_secs();
+                    time_gap > 60
+                } else {
+                    false
+                };
+                Self::make_list_item_with_separator(entry, inner_width, needs_separator)
+            })
             .collect();
 
         let list = List::new(items)

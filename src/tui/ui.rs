@@ -31,9 +31,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let input_area = main_layout[2];
 
     // Content layout: dynamic sizing based on focus
-    // When sidebar is focused, give it more space (40%), otherwise 30%
+    // When sidebar is focused, give it more space (50%), otherwise 30% (per FR-9.3)
     let (chat_pct, sidebar_pct) = if app.focus == Focus::Sidebar {
-        (60, 40)
+        (50, 50)
     } else {
         (70, 30)
     };
@@ -113,7 +113,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 /// Renders the chat panel.
-fn render_chat(frame: &mut Frame, area: Rect, app: &App) {
+fn render_chat(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Chat;
     let widget = chat::ChatPanel::new(
         &app.messages,
@@ -121,8 +121,22 @@ fn render_chat(frame: &mut Frame, area: Rect, app: &App) {
         focused,
         app.has_new_messages,
         app.text_selection.as_ref(),
+        app.spinner.as_ref(), // Pass spinner for inline indicator
     );
     frame.render_widget(widget, area);
+
+    // Calculate and store banner area for click detection (FR-5.3)
+    if app.has_new_messages && app.chat_scroll > 0 {
+        let indicator = "↓ New messages ↓";
+        let indicator_len = indicator.len() as u16;
+        let x = area.x + (area.width.saturating_sub(indicator_len)) / 2;
+        let y = area.y + area.height - 1;
+        if y > area.y {
+            app.banner_area = Some(Rect::new(x, y, indicator_len, 1));
+        }
+    } else {
+        app.banner_area = None;
+    }
 }
 
 /// Renders the sidebar.
