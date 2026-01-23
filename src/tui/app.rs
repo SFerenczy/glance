@@ -627,6 +627,9 @@ impl App {
         }
 
         if let Some(item) = self.sql_completion.selected_item().cloned() {
+            // Record completion for recency ranking
+            self.sql_completion.record_completion(&item.text);
+
             // Calculate the replacement range
             let filter_len = self.sql_completion.filter.len();
             let sql_cursor = self.sql_cursor();
