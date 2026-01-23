@@ -103,8 +103,50 @@ Type these commands in the input bar:
 | `/sql <query>`     | Execute raw SQL directly           |
 | `/clear`           | Clear chat history and LLM context |
 | `/schema`          | Display database schema summary    |
+| `/refresh schema`  | Refresh database schema            |
 | `/help`            | Show available commands            |
 | `/quit` or `/exit` | Exit application                   |
+
+### Connection Commands
+
+| Command                      | Description                  |
+| ---------------------------- | ---------------------------- |
+| `/connections`               | List saved connections       |
+| `/connect <name>`            | Switch to a saved connection |
+| `/conn add <name> <params>`  | Add a new connection         |
+| `/conn edit <name> <params>` | Edit an existing connection  |
+| `/conn delete <name>`        | Delete a connection          |
+
+**Connection parameters**: `backend=`, `host=`, `port=`, `database=`, `user=`, `password=`, `sslmode=`
+
+Example:
+
+```
+/conn add mydb backend=postgres host=localhost port=5432 database=mydb user=postgres --test
+```
+
+### LLM Commands
+
+| Command               | Description               |
+| --------------------- | ------------------------- |
+| `/llm`                | Show current LLM settings |
+| `/llm provider`       | Show current provider     |
+| `/llm provider <val>` | Set LLM provider          |
+| `/llm model`          | Show current model        |
+| `/llm model <val>`    | Set LLM model             |
+| `/llm key`            | Show API key status       |
+| `/llm key <val>`      | Set API key               |
+
+### Query History Commands
+
+| Command                | Description          |
+| ---------------------- | -------------------- |
+| `/history`             | Show query history   |
+| `/history clear`       | Clear query history  |
+| `/savequery <name>`    | Save last query      |
+| `/queries`             | List saved queries   |
+| `/usequery <name>`     | Load a saved query   |
+| `/query delete <name>` | Delete a saved query |
 
 ### Examples
 
@@ -203,15 +245,19 @@ user = "readonly"
 
 ### Environment Variables
 
-| Variable            | Description               |
-| ------------------- | ------------------------- |
-| `OPENAI_API_KEY`    | API key for OpenAI        |
-| `ANTHROPIC_API_KEY` | API key for Anthropic     |
-| `PGHOST`            | Default PostgreSQL host   |
-| `PGPORT`            | Default PostgreSQL port   |
-| `PGDATABASE`        | Default database name     |
-| `PGUSER`            | Default database user     |
-| `PGPASSWORD`        | Default database password |
+| Variable              | Description                              |
+| --------------------- | ---------------------------------------- |
+| `OPENAI_API_KEY`      | API key for OpenAI                       |
+| `ANTHROPIC_API_KEY`   | API key for Anthropic                    |
+| `GLANCE_LLM_PROVIDER` | Default LLM provider (openai, anthropic) |
+| `OPENAI_MODEL`        | Default model for OpenAI                 |
+| `ANTHROPIC_MODEL`     | Default model for Anthropic              |
+| `GLANCE_DB_POOL_SIZE` | SQLite state DB pool size (default: 4)   |
+| `PGHOST`              | Default PostgreSQL host                  |
+| `PGPORT`              | Default PostgreSQL port                  |
+| `PGDATABASE`          | Default database name                    |
+| `PGUSER`              | Default database user                    |
+| `PGPASSWORD`          | Default database password                |
 
 ---
 
@@ -341,14 +387,26 @@ Press `Tab` to focus the sidebar, then use arrow keys to browse executed queries
 
 ---
 
-## Limitations (v0.1)
+## Limitations (v0.2)
 
 Current limitations that may be addressed in future versions:
 
-- PostgreSQL only (no MySQL, SQLite)
+- PostgreSQL only (MySQL, SQLite planned)
 - Single database connection at a time
-- Query history not persisted between sessions
 - No clipboard copy support
 - No export to file
 - No custom themes
 - Limited mouse support (scroll only)
+
+---
+
+## LLM Configuration Resolution
+
+LLM settings are resolved in this order (highest priority first):
+
+1. **CLI arguments** (`--llm`, `--model`)
+2. **Persisted settings** (via `/llm` commands)
+3. **Environment variables** (`GLANCE_LLM_PROVIDER`, `OPENAI_MODEL`, etc.)
+4. **Provider defaults**
+
+This allows you to set defaults via environment variables, override them per-session with `/llm` commands, and override everything with CLI arguments for testing.

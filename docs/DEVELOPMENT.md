@@ -109,21 +109,50 @@ The database is seeded with test data from `tests/fixtures/seed.sql`.
 glance/
 ├── src/
 │   ├── main.rs           # Application entry point
+│   ├── app.rs            # Orchestrator (coordinates all components)
 │   ├── error.rs          # Error types
 │   ├── config.rs         # Configuration loading
 │   ├── cli.rs            # CLI argument parsing
+│   ├── commands/         # Command parsing and handlers
+│   │   ├── router.rs     # Command parsing
+│   │   └── handlers/     # Command implementations
+│   ├── connection/       # Connection management
 │   ├── db/               # Database layer
+│   │   ├── mod.rs        # DatabaseClient trait
+│   │   ├── postgres.rs   # PostgreSQL implementation
+│   │   └── mock.rs       # Mock for testing
 │   ├── llm/              # LLM integration
+│   │   ├── factory.rs    # Client creation with config resolution
+│   │   ├── manager.rs    # Client lifecycle management
+│   │   ├── service.rs    # Unified NL→SQL pipeline
+│   │   ├── anthropic.rs  # Anthropic provider
+│   │   ├── openai.rs     # OpenAI provider
+│   │   └── ollama.rs     # Ollama provider
+│   ├── persistence/      # State database (SQLite)
+│   │   ├── mod.rs        # StateDb with configurable pool
+│   │   ├── connections.rs# Saved connections
+│   │   ├── history.rs    # Query history
+│   │   └── llm_settings.rs # LLM configuration
 │   ├── safety/           # Query safety classification
 │   └── tui/              # Terminal UI
+│       ├── headless/     # Headless mode for testing
+│       └── ...
 ├── tests/
 │   ├── fixtures/         # Test data and SQL
-│   └── integration/      # Integration tests
+│   ├── integration/      # Integration tests
+│   └── tui/              # TUI headless tests
 ├── docs/                 # Documentation
 ├── Cargo.toml            # Rust dependencies
-├── docker compose.yml    # Test database setup
+├── docker-compose.yml    # Test database setup
 └── justfile              # Task runner commands
 ```
+
+### Key Architecture Concepts
+
+- **Orchestrator** (`app.rs`): Coordinates database, LLM, and UI components
+- **LlmService** (`llm/service.rs`): Unified NL→SQL pipeline for TUI and headless modes
+- **LlmConfigBuilder** (`llm/factory.rs`): Layered config resolution (CLI → persisted → env → defaults)
+- **StateDb** (`persistence/mod.rs`): SQLite with WAL mode, configurable pool size
 
 ---
 
