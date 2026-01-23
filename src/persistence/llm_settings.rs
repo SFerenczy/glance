@@ -136,8 +136,16 @@ pub async fn set_api_key(
         let key = SecretStorage::llm_api_key(provider);
         secrets.store(&key, api_key)?;
         (ApiKeyStorage::Keyring, None)
-    } else {
+    } else if secrets.has_plaintext_consent() {
+        tracing::warn!(
+            "Storing API key for provider '{}' in plaintext (keyring unavailable)",
+            provider
+        );
         (ApiKeyStorage::Plaintext, Some(api_key.to_string()))
+    } else {
+        return Err(GlanceError::persistence(
+            "Keyring unavailable. To store API keys in plaintext, use --allow-plaintext or confirm when prompted.",
+        ));
     };
 
     sqlx::query(
@@ -177,7 +185,14 @@ pub async fn get_api_key(
                     let key = SecretStorage::llm_api_key(provider);
                     secrets.retrieve(&key)
                 }
-                ApiKeyStorage::Plaintext => Ok(plaintext),
+                ApiKeyStorage::Plaintext => {
+                    tracing::warn!(
+                        "API key for provider '{}' is stored in plaintext. \
+                         Consider re-adding with keyring available for secure storage.",
+                        provider
+                    );
+                    Ok(plaintext)
+                }
             }
         }
         None => Ok(None),

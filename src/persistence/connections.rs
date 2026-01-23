@@ -199,8 +199,16 @@ pub async fn create_connection(
             let key = SecretStorage::connection_password_key(&profile.name);
             secrets.store(&key, pwd)?;
             (PasswordStorage::Keyring, None)
-        } else {
+        } else if secrets.has_plaintext_consent() {
+            tracing::warn!(
+                "Storing password for connection '{}' in plaintext (keyring unavailable)",
+                profile.name
+            );
             (PasswordStorage::Plaintext, Some(pwd.to_string()))
+        } else {
+            return Err(GlanceError::persistence(
+                "Keyring unavailable. To store passwords in plaintext, use --allow-plaintext or confirm when prompted.",
+            ));
         }
     } else {
         (PasswordStorage::None, None)
@@ -254,8 +262,16 @@ pub async fn update_connection(
             let key = SecretStorage::connection_password_key(&profile.name);
             secrets.store(&key, pwd)?;
             (PasswordStorage::Keyring, None)
-        } else {
+        } else if secrets.has_plaintext_consent() {
+            tracing::warn!(
+                "Storing password for connection '{}' in plaintext (keyring unavailable)",
+                profile.name
+            );
             (PasswordStorage::Plaintext, Some(pwd.to_string()))
+        } else {
+            return Err(GlanceError::persistence(
+                "Keyring unavailable. To store passwords in plaintext, use --allow-plaintext or confirm when prompted.",
+            ));
         };
 
         sqlx::query(
@@ -385,7 +401,14 @@ pub async fn get_connection_password(
                     }
                     Ok(result)
                 }
-                PasswordStorage::Plaintext => Ok(plaintext),
+                PasswordStorage::Plaintext => {
+                    tracing::warn!(
+                        "Password for connection '{}' is stored in plaintext. \
+                         Consider re-adding with keyring available for secure storage.",
+                        name
+                    );
+                    Ok(plaintext)
+                }
             }
         }
         None => Err(GlanceError::persistence(format!(

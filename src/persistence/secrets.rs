@@ -101,6 +101,16 @@ impl SecretStorage {
         self.plaintext_consented.store(true, Ordering::Relaxed);
     }
 
+    /// Returns whether plaintext storage has been consented to.
+    pub fn has_plaintext_consent(&self) -> bool {
+        self.plaintext_consented.load(Ordering::Relaxed)
+    }
+
+    /// Returns whether secrets can be stored (either keyring available or plaintext consented).
+    pub fn can_store(&self) -> bool {
+        self.keyring_available || self.has_plaintext_consent()
+    }
+
     /// Stores a secret in the keyring.
     ///
     /// Returns the secret key identifier for later retrieval.
