@@ -3,6 +3,8 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [build]
 rustc-wrapper = "sccache"
+# Share target directory across git worktrees to avoid redundant rebuilds
+target-dir = "/home/sophie/.cargo-target/glance"
 
 [env]
 # Use system SQLite instead of compiling from source (requires libsqlite3-dev)
