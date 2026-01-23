@@ -25,7 +25,7 @@ macro_rules! require_state_db {
 
 use crate::commands::{
     handlers::{
-        connection, history, llm_settings, queries,
+        connection, history, llm_settings, queries, system,
         system::{
             handle_clear, handle_help, handle_quit, handle_schema, handle_sql_empty,
             handle_unknown, handle_vim,
@@ -61,6 +61,8 @@ pub enum InputResult {
     Exit,
     /// Toggle vim mode.
     ToggleVimMode,
+    /// Toggle row numbers in result tables.
+    ToggleRowNumbers,
     /// Connection switched successfully.
     ConnectionSwitch {
         /// Messages to display (e.g., "Connected to X").
@@ -307,6 +309,7 @@ impl Orchestrator {
             Command::Schema => handle_schema(&ctx),
             Command::Quit => handle_quit(),
             Command::Vim => handle_vim(),
+            Command::RowNumbers => system::handle_rownumbers(),
             Command::Help => handle_help(),
             Command::ConnectionsList => connection::handle_connections_list(&ctx).await,
             Command::Connect(name) => {
@@ -384,6 +387,7 @@ impl Orchestrator {
             },
             CommandResult::Exit => InputResult::Exit,
             CommandResult::ToggleVimMode => InputResult::ToggleVimMode,
+            CommandResult::ToggleRowNumbers => InputResult::ToggleRowNumbers,
             CommandResult::ConnectionSwitch {
                 messages,
                 connection_info,

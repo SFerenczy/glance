@@ -348,6 +348,8 @@ pub struct App {
     pub is_connected: bool,
     /// Whether vim-style navigation is enabled (toggled via /vim command).
     pub vim_mode_enabled: bool,
+    /// Whether to show row numbers in result tables (toggled via /rownumbers command).
+    pub show_row_numbers: bool,
     /// Text selection state for copy functionality.
     pub text_selection: Option<TextSelection>,
     /// The area where the chat panel was last rendered (for mouse hit testing).
@@ -429,6 +431,7 @@ impl App {
             ring_bell: false,
             is_connected: true,      // Assume connected initially
             vim_mode_enabled: false, // Vim mode disabled by default
+            show_row_numbers: false, // Row numbers disabled by default
             text_selection: None,
             chat_area: None,
             banner_area: None,
@@ -525,6 +528,16 @@ impl App {
             self.show_toast("Vim mode disabled");
             // Reset to Insert mode when disabling
             self.input_mode = InputMode::Insert;
+        }
+    }
+
+    /// Toggles row numbers in result tables on/off.
+    pub fn toggle_row_numbers(&mut self) {
+        self.show_row_numbers = !self.show_row_numbers;
+        if self.show_row_numbers {
+            self.show_toast("Row numbers enabled");
+        } else {
+            self.show_toast("Row numbers disabled");
         }
     }
 

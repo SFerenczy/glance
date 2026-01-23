@@ -21,6 +21,7 @@ pub struct ChatPanel<'a> {
     has_new_messages: bool,
     text_selection: Option<&'a TextSelection>,
     spinner: Option<&'a Spinner>,
+    show_row_numbers: bool,
 }
 
 impl<'a> ChatPanel<'a> {
@@ -32,6 +33,7 @@ impl<'a> ChatPanel<'a> {
         has_new_messages: bool,
         text_selection: Option<&'a TextSelection>,
         spinner: Option<&'a Spinner>,
+        show_row_numbers: bool,
     ) -> Self {
         Self {
             messages,
@@ -40,6 +42,7 @@ impl<'a> ChatPanel<'a> {
             has_new_messages,
             text_selection,
             spinner,
+            show_row_numbers,
         }
     }
 
@@ -190,7 +193,7 @@ impl<'a> ChatPanel<'a> {
         result: &crate::db::QueryResult,
         available_width: usize,
     ) -> Vec<Line<'a>> {
-        let table = ResultTable::new(result);
+        let table = ResultTable::new(result).show_row_numbers(self.show_row_numbers);
         // Convert the owned lines to static lifetime by collecting into owned data
         table
             .render_to_lines(available_width.saturating_sub(2))
@@ -369,7 +372,7 @@ mod tests {
     #[test]
     fn test_chat_panel_empty() {
         let messages: Vec<ChatMessage> = vec![];
-        let panel = ChatPanel::new(&messages, 0, false, false, None, None);
+        let panel = ChatPanel::new(&messages, 0, false, false, None, None, false);
         let lines = panel.render_messages(80);
         assert!(lines.is_empty());
     }
@@ -377,7 +380,7 @@ mod tests {
     #[test]
     fn test_chat_panel_user_message() {
         let messages = vec![ChatMessage::User("Hello".to_string())];
-        let panel = ChatPanel::new(&messages, 0, false, false, None, None);
+        let panel = ChatPanel::new(&messages, 0, false, false, None, None, false);
         let lines = panel.render_messages(80);
 
         // Should have label + content
@@ -387,7 +390,7 @@ mod tests {
     #[test]
     fn test_chat_panel_multiline_message() {
         let messages = vec![ChatMessage::User("Line 1\nLine 2\nLine 3".to_string())];
-        let panel = ChatPanel::new(&messages, 0, false, false, None, None);
+        let panel = ChatPanel::new(&messages, 0, false, false, None, None, false);
         let lines = panel.render_messages(80);
 
         // Should have label + 3 content lines
@@ -405,7 +408,7 @@ mod tests {
             was_truncated: false,
         };
         let messages = vec![ChatMessage::Result(result)];
-        let panel = ChatPanel::new(&messages, 0, false, false, None, None);
+        let panel = ChatPanel::new(&messages, 0, false, false, None, None, false);
         let lines = panel.render_messages(80);
 
         // Should have table lines
@@ -419,6 +422,7 @@ mod tests {
             ChatMessage::Assistant("Hi there!".to_string()),
         ];
         let panel = ChatPanel::new(&messages, 0, false, false, None, None);
+        let panel = ChatPanel::new(&messages, 0, false, false, None, false);
         let lines = panel.render_messages(80);
 
         // Should have lines for both messages plus spacing

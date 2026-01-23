@@ -544,6 +544,9 @@ impl Tui {
                     InputResult::ToggleVimMode => {
                         app_state.toggle_vim_mode();
                     }
+                    InputResult::ToggleRowNumbers => {
+                        app_state.toggle_row_numbers();
+                    }
                     InputResult::ConnectionSwitch {
                         messages,
                         connection_info,

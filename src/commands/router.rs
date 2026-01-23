@@ -134,6 +134,8 @@ pub enum Command {
     Quit,
     /// Toggle vim-style navigation mode.
     Vim,
+    /// Toggle row numbers in result tables.
+    RowNumbers,
     /// List saved connections.
     ConnectionsList,
     /// Switch to a saved connection.
@@ -204,6 +206,7 @@ impl CommandRouter {
             "/schema" => Command::Schema,
             "/quit" | "/exit" => Command::Quit,
             "/vim" => Command::Vim,
+            "/rownumbers" => Command::RowNumbers,
             "/help" => Command::Help,
             "/connections" => Command::ConnectionsList,
             "/connect" => Command::Connect(args.to_string()),

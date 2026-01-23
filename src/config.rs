@@ -19,9 +19,70 @@ pub struct Config {
     #[serde(default)]
     pub llm: LlmConfig,
 
+    /// UI configuration.
+    #[serde(default)]
+    pub ui: UiConfig,
+
     /// Named database connections.
     #[serde(default)]
     pub connections: HashMap<String, ConnectionConfig>,
+}
+
+/// UI configuration options.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiConfig {
+    /// Enable vim-style navigation (can also toggle with /vim command).
+    #[serde(default)]
+    pub vim_mode: bool,
+
+    /// Show row numbers in result tables.
+    #[serde(default)]
+    pub row_numbers: bool,
+
+    /// Terminal bell on long query completion.
+    #[serde(default = "default_bell_on_completion")]
+    pub bell_on_completion: bool,
+
+    /// Threshold in seconds for long query bell notification.
+    #[serde(default = "default_bell_threshold_seconds")]
+    pub bell_threshold_seconds: u64,
+
+    /// Chat panel width ratio (0.0 to 1.0).
+    #[serde(default = "default_chat_panel_width")]
+    pub chat_panel_width: f64,
+
+    /// Query log width when focused (0.0 to 1.0).
+    #[serde(default = "default_query_log_width_focused")]
+    pub query_log_width_focused: f64,
+}
+
+fn default_bell_on_completion() -> bool {
+    true
+}
+
+fn default_bell_threshold_seconds() -> u64 {
+    5
+}
+
+fn default_chat_panel_width() -> f64 {
+    0.7
+}
+
+fn default_query_log_width_focused() -> f64 {
+    0.5
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            vim_mode: false,
+            row_numbers: false,
+            bell_on_completion: default_bell_on_completion(),
+            bell_threshold_seconds: default_bell_threshold_seconds(),
+            chat_panel_width: default_chat_panel_width(),
+            query_log_width_focused: default_query_log_width_focused(),
+        }
+    }
 }
 
 /// LLM provider configuration.

@@ -21,12 +21,22 @@ const MIN_COLUMN_WIDTH: usize = 4;
 /// Widget for rendering a query result as a table.
 pub struct ResultTable<'a> {
     result: &'a QueryResult,
+    show_row_numbers: bool,
 }
 
 impl<'a> ResultTable<'a> {
     /// Creates a new result table widget.
     pub fn new(result: &'a QueryResult) -> Self {
-        Self { result }
+        Self {
+            result,
+            show_row_numbers: false,
+        }
+    }
+
+    /// Sets whether to show row numbers.
+    pub fn show_row_numbers(mut self, show: bool) -> Self {
+        self.show_row_numbers = show;
+        self
     }
 
     /// Calculates the optimal width for each column.
@@ -102,11 +112,20 @@ impl<'a> ResultTable<'a> {
         // Header separator
         lines.push(self.render_border(&adjusted_widths, '├', '┼', '┤'));
 
-        // Data rows with row numbers, or "No results" message if empty
+        // Data rows (with optional row numbers), or "No results" message if empty
         if self.result.rows.is_empty() {
-            // Show "No results" message spanning the table
+            // Show "No results" message with execution time per FR-10.2
+            let prefix = if self.show_row_numbers { "    " } else { "" };
             lines.push(Line::from(Span::styled(
-                "    │ (no results)",
+                format!("{}│ No results found.", prefix),
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "{}│ Query executed successfully in {}ms.",
+                    prefix,
+                    self.result.execution_time.as_millis()
+                ),
                 Style::default().fg(Color::DarkGray),
             )));
         } else {
@@ -118,17 +137,19 @@ impl<'a> ResultTable<'a> {
         // Bottom border
         lines.push(self.render_border(&adjusted_widths, '└', '┴', '┘'));
 
-        // Footer with row count and execution time
-        let footer = format!(
-            "{} row{} returned ({}ms)",
-            self.result.row_count,
-            if self.result.row_count == 1 { "" } else { "s" },
-            self.result.execution_time.as_millis()
-        );
-        lines.push(Line::from(Span::styled(
-            footer,
-            Style::default().fg(Color::DarkGray),
-        )));
+        // Footer with row count and execution time (only if there are results)
+        if !self.result.rows.is_empty() {
+            let footer = format!(
+                "{} row{} returned ({}ms)",
+                self.result.row_count,
+                if self.result.row_count == 1 { "" } else { "s" },
+                self.result.execution_time.as_millis()
+            );
+            lines.push(Line::from(Span::styled(
+                footer,
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
 
         lines
     }
@@ -136,8 +157,10 @@ impl<'a> ResultTable<'a> {
     /// Renders a horizontal border line.
     fn render_border(&self, widths: &[usize], left: char, mid: char, right: char) -> Line<'a> {
         let mut border = String::new();
-        // Add spacing for row number column (4 chars: "{:>3} ")
-        border.push_str("    ");
+        // Add spacing for row number column (4 chars: "{:>3} ") if enabled
+        if self.show_row_numbers {
+            border.push_str("    ");
+        }
         border.push(left);
 
         for (i, &width) in widths.iter().enumerate() {
@@ -155,13 +178,15 @@ impl<'a> ResultTable<'a> {
     /// Renders the header row with column names.
     fn render_header_row(&self, widths: &[usize]) -> Line<'a> {
         let mut spans = Vec::new();
-        // Add header for row number column (matches "{:>3} " format in data rows)
-        spans.push(Span::styled(
-            "  # ",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ));
+        // Add header for row number column (matches "{:>3} " format in data rows) if enabled
+        if self.show_row_numbers {
+            spans.push(Span::styled(
+                "  # ",
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
         spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
 
         for (i, col) in self.result.columns.iter().enumerate() {
@@ -181,16 +206,18 @@ impl<'a> ResultTable<'a> {
         Line::from(spans)
     }
 
-    /// Renders a data row with row number.
+    /// Renders a data row with optional row number.
     fn render_data_row(&self, row_num: usize, row: &[Value], widths: &[usize]) -> Line<'a> {
         let mut spans = Vec::new();
 
-        // Row number prefix (dimmed)
-        let row_num_str = format!("{:>3} ", row_num);
-        spans.push(Span::styled(
-            row_num_str,
-            Style::default().fg(Color::DarkGray),
-        ));
+        // Row number prefix (dimmed) if enabled
+        if self.show_row_numbers {
+            let row_num_str = format!("{:>3} ", row_num);
+            spans.push(Span::styled(
+                row_num_str,
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
 
         spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
 

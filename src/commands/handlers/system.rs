@@ -35,6 +35,11 @@ pub fn handle_vim() -> CommandResult {
     CommandResult::ToggleVimMode
 }
 
+/// Handle /rownumbers command.
+pub fn handle_rownumbers() -> CommandResult {
+    CommandResult::ToggleRowNumbers
+}
+
 /// Handle unknown command.
 pub fn handle_unknown(command: &str) -> CommandResult {
     CommandResult::Messages(

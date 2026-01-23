@@ -121,7 +121,8 @@ fn render_chat(frame: &mut Frame, area: Rect, app: &mut App) {
         focused,
         app.has_new_messages,
         app.text_selection.as_ref(),
-        app.spinner.as_ref(), // Pass spinner for inline indicator
+        app.spinner.as_ref(),
+        app.show_row_numbers,
     );
     frame.render_widget(widget, area);
 

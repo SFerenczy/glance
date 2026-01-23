@@ -47,6 +47,8 @@ pub enum CommandResult {
     Exit,
     /// Toggle vim mode.
     ToggleVimMode,
+    /// Toggle row numbers in result tables.
+    ToggleRowNumbers,
     /// Connection switched successfully.
     ConnectionSwitch {
         /// Messages to display.

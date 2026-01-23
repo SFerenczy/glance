@@ -335,6 +335,9 @@ impl HeadlessRunner {
             InputResult::ToggleVimMode => {
                 self.app.toggle_vim_mode();
             }
+            InputResult::ToggleRowNumbers => {
+                self.app.toggle_row_numbers();
+            }
             InputResult::ConnectionSwitch {
                 messages,
                 connection_info,
