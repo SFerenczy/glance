@@ -13,6 +13,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
+use std::collections::HashSet;
 
 /// Type of completion item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +102,8 @@ pub struct SqlCompletionState {
     pub selected: usize,
     /// The filter text (current word being typed).
     pub filter: String,
+    /// Recently used completions for recency ranking (within session).
+    pub recent_completions: HashSet<String>,
 }
 
 impl SqlCompletionState {
@@ -130,9 +133,22 @@ impl SqlCompletionState {
                 }
                 self.add_functions();
             }
-            SqlContext::FromTable | SqlContext::JoinTable => {
+            SqlContext::FromTable => {
                 // Suggest table names
                 if let Some(schema) = schema {
+                    self.add_tables(schema);
+                } else {
+                    // Graceful degradation: show hint when no schema
+                    self.items.push(CompletionItem::new(
+                        "(connect to see tables)",
+                        CompletionKind::Hint,
+                    ));
+                }
+            }
+            SqlContext::JoinTable => {
+                // Suggest tables with FK-based join suggestions first
+                if let Some(schema) = schema {
+                    self.add_fk_join_suggestions(schema, &result.tables);
                     self.add_tables(schema);
                 } else {
                     // Graceful degradation: show hint when no schema
@@ -206,25 +222,32 @@ impl SqlCompletionState {
             }
         }
 
-        // Filter items by current word
+        // Filter items by current word (fuzzy matching)
         if !self.filter.is_empty() {
             let filter_lower = self.filter.to_lowercase();
             self.items.retain(|item| {
-                item.text.to_lowercase().starts_with(&filter_lower)
-                    || item.text.to_lowercase().contains(&filter_lower)
+                let text_lower = item.text.to_lowercase();
+                // Keep if: prefix match, substring match, or fuzzy match
+                text_lower.starts_with(&filter_lower)
+                    || text_lower.contains(&filter_lower)
+                    || fuzzy_match(&text_lower, &filter_lower)
             });
         }
 
-        // Sort: prefix matches first, then alphabetically
+        // Sort by ranking per FR-3.5:
+        // 1. Exact prefix match
+        // 2. Case-insensitive prefix match
+        // 3. Substring match
+        // 4. Fuzzy match
+        // 5. Recency of use (within session)
         let filter_lower = self.filter.to_lowercase();
+        let recent = &self.recent_completions;
         self.items.sort_by(|a, b| {
-            let a_prefix = a.text.to_lowercase().starts_with(&filter_lower);
-            let b_prefix = b.text.to_lowercase().starts_with(&filter_lower);
-            match (a_prefix, b_prefix) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.text.to_lowercase().cmp(&b.text.to_lowercase()),
-            }
+            let a_score = rank_completion(&a.text, &self.filter, &filter_lower, recent);
+            let b_score = rank_completion(&b.text, &self.filter, &filter_lower, recent);
+            a_score
+                .cmp(&b_score)
+                .then_with(|| a.text.to_lowercase().cmp(&b.text.to_lowercase()))
         });
 
         // Update visibility
@@ -232,11 +255,62 @@ impl SqlCompletionState {
         self.selected = 0;
     }
 
+    /// Records a completion as recently used for recency ranking.
+    pub fn record_completion(&mut self, text: &str) {
+        self.recent_completions.insert(text.to_lowercase());
+    }
+
     /// Adds table names from the schema.
     fn add_tables(&mut self, schema: &Schema) {
         for table in &schema.tables {
-            self.items
-                .push(CompletionItem::new(&table.name, CompletionKind::Table));
+            // Skip tables already added as FK suggestions
+            if !self.items.iter().any(|i| i.text == table.name) {
+                self.items
+                    .push(CompletionItem::new(&table.name, CompletionKind::Table));
+            }
+        }
+    }
+
+    /// Adds FK-based join suggestions with ON clause templates.
+    fn add_fk_join_suggestions(&mut self, schema: &Schema, current_tables: &[String]) {
+        for fk in &schema.foreign_keys {
+            // Check if the FK relates to any of the current tables
+            let from_in_query = current_tables.iter().any(|t| t == &fk.from_table);
+            let to_in_query = current_tables.iter().any(|t| t == &fk.to_table);
+
+            if from_in_query && !to_in_query {
+                // Suggest joining to the target table
+                let from_col = fk.from_columns.first().map(|s| s.as_str()).unwrap_or("");
+                let to_col = fk.to_columns.first().map(|s| s.as_str()).unwrap_or("");
+                let suggestion = format!(
+                    "{} ON {}.{} = {}.{}",
+                    fk.to_table, fk.to_table, to_col, fk.from_table, from_col
+                );
+                self.items.push(
+                    CompletionItem::new(&fk.to_table, CompletionKind::Table)
+                        .with_detail(format!("JOIN {} ON ...", fk.to_table)),
+                );
+                self.items.push(
+                    CompletionItem::new(suggestion, CompletionKind::Hint)
+                        .with_detail("FK join template"),
+                );
+            } else if to_in_query && !from_in_query {
+                // Suggest joining from the source table
+                let from_col = fk.from_columns.first().map(|s| s.as_str()).unwrap_or("");
+                let to_col = fk.to_columns.first().map(|s| s.as_str()).unwrap_or("");
+                let suggestion = format!(
+                    "{} ON {}.{} = {}.{}",
+                    fk.from_table, fk.from_table, from_col, fk.to_table, to_col
+                );
+                self.items.push(
+                    CompletionItem::new(&fk.from_table, CompletionKind::Table)
+                        .with_detail(format!("JOIN {} ON ...", fk.from_table)),
+                );
+                self.items.push(
+                    CompletionItem::new(suggestion, CompletionKind::Hint)
+                        .with_detail("FK join template"),
+                );
+            }
         }
     }
 
@@ -351,16 +425,73 @@ impl<'a> SqlCompletionPopup<'a> {
         Self { state }
     }
 
+    /// Maximum visible items per FR-3.6.
+    const MAX_VISIBLE_ITEMS: u16 = 8;
+
     /// Calculates the area for the popup.
-    pub fn popup_area(input_area: Rect, max_items: usize) -> Rect {
+    pub fn popup_area(input_area: Rect, item_count: usize) -> Rect {
         let width = input_area.width.min(60);
-        let height = (max_items as u16 + 2).min(12); // +2 for borders
+        // Cap to 8 visible items per FR-3.6, +2 for borders
+        let visible_items = (item_count as u16).min(Self::MAX_VISIBLE_ITEMS);
+        let height = visible_items + 2;
 
         let x = input_area.x + 1;
         let y = input_area.y.saturating_sub(height);
 
         Rect::new(x, y, width, height)
     }
+}
+
+/// Ranks a completion item for sorting (lower is better).
+/// Per FR-3.5: exact prefix > case-insensitive prefix > substring > fuzzy > recency
+fn rank_completion(text: &str, filter: &str, filter_lower: &str, recent: &HashSet<String>) -> u8 {
+    if filter.is_empty() {
+        // No filter: rank by recency only
+        return if recent.contains(&text.to_lowercase()) {
+            0
+        } else {
+            1
+        };
+    }
+
+    let text_lower = text.to_lowercase();
+
+    // 1. Exact prefix match (case-sensitive)
+    if text.starts_with(filter) {
+        return 0;
+    }
+    // 2. Case-insensitive prefix match
+    if text_lower.starts_with(filter_lower) {
+        return 1;
+    }
+    // 3. Substring match
+    if text_lower.contains(filter_lower) {
+        return 2;
+    }
+    // 4. Fuzzy match
+    if fuzzy_match(&text_lower, filter_lower) {
+        return 3;
+    }
+    // 5. Recency boost for items that don't match well
+    if recent.contains(&text_lower) {
+        return 4;
+    }
+    5
+}
+
+/// Simple fuzzy matching: all filter characters appear in order in text.
+fn fuzzy_match(text: &str, filter: &str) -> bool {
+    let mut text_chars = text.chars().peekable();
+    for filter_char in filter.chars() {
+        loop {
+            match text_chars.next() {
+                Some(tc) if tc == filter_char => break,
+                Some(_) => continue,
+                None => return false,
+            }
+        }
+    }
+    true
 }
 
 impl Widget for SqlCompletionPopup<'_> {
@@ -474,6 +605,39 @@ mod tests {
         }
     }
 
+    fn test_schema_with_fk() -> Schema {
+        use crate::db::ForeignKey;
+        Schema {
+            tables: vec![
+                Table {
+                    name: "users".to_string(),
+                    columns: vec![
+                        Column::new("id", "integer"),
+                        Column::new("name", "varchar(255)"),
+                    ],
+                    primary_key: vec!["id".to_string()],
+                    indexes: vec![],
+                },
+                Table {
+                    name: "orders".to_string(),
+                    columns: vec![
+                        Column::new("id", "integer"),
+                        Column::new("user_id", "integer"),
+                        Column::new("total", "decimal"),
+                    ],
+                    primary_key: vec!["id".to_string()],
+                    indexes: vec![],
+                },
+            ],
+            foreign_keys: vec![ForeignKey::new(
+                "orders",
+                vec!["user_id".to_string()],
+                "users",
+                vec!["id".to_string()],
+            )],
+        }
+    }
+
     #[test]
     fn test_completion_after_from() {
         let mut state = SqlCompletionState::new();
@@ -582,6 +746,138 @@ mod tests {
         assert!(
             state.items.iter().any(|i| i.text == "OR"),
             "Should have 'OR' keyword"
+        );
+    }
+
+    #[test]
+    fn test_fk_join_suggestion_from_orders() {
+        let mut state = SqlCompletionState::new();
+        let schema = test_schema_with_fk();
+        // When orders is in query, should suggest users with FK join template
+        state.update("SELECT * FROM orders JOIN ", 26, Some(&schema));
+
+        assert!(state.visible, "Completion should be visible");
+        // Should have users as FK-related table suggestion
+        assert!(
+            state.items.iter().any(|i| i.text == "users"),
+            "Should suggest 'users' table via FK"
+        );
+        // Should have ON clause template
+        assert!(
+            state
+                .items
+                .iter()
+                .any(|i| i.text.contains("ON") && i.text.contains("user_id")),
+            "Should have FK join template with ON clause"
+        );
+    }
+
+    #[test]
+    fn test_fk_join_suggestion_from_users() {
+        let mut state = SqlCompletionState::new();
+        let schema = test_schema_with_fk();
+        // When users is in query, should suggest orders with FK join template
+        state.update("SELECT * FROM users JOIN ", 25, Some(&schema));
+
+        assert!(state.visible, "Completion should be visible");
+        // Should have orders as FK-related table suggestion
+        assert!(
+            state.items.iter().any(|i| i.text == "orders"),
+            "Should suggest 'orders' table via FK"
+        );
+    }
+
+    #[test]
+    fn test_recency_ranking() {
+        let mut state = SqlCompletionState::new();
+        let schema = test_schema();
+
+        // Record "orders" as recently used
+        state.record_completion("orders");
+
+        // Update with no filter
+        state.update("SELECT * FROM ", 14, Some(&schema));
+
+        assert!(state.visible);
+        // "orders" should be ranked first due to recency
+        assert_eq!(
+            state.items.first().map(|i| i.text.as_str()),
+            Some("orders"),
+            "Recently used 'orders' should be first"
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_matching() {
+        let mut state = SqlCompletionState::new();
+        let schema = test_schema();
+
+        // "usr" should fuzzy match "users" (u-s-r all appear in order)
+        state.update("SELECT * FROM usr", 17, Some(&schema));
+
+        assert!(state.visible, "Completion should be visible");
+        assert!(
+            state.items.iter().any(|i| i.text == "users"),
+            "Should fuzzy match 'users' with 'usr'"
+        );
+    }
+
+    #[test]
+    fn test_ranking_order() {
+        let mut state = SqlCompletionState::new();
+        // Create schema with tables that test ranking
+        let schema = Schema {
+            tables: vec![
+                Table {
+                    name: "Users".to_string(), // Exact case
+                    columns: vec![],
+                    primary_key: vec![],
+                    indexes: vec![],
+                },
+                Table {
+                    name: "users_archive".to_string(), // Prefix match
+                    columns: vec![],
+                    primary_key: vec![],
+                    indexes: vec![],
+                },
+                Table {
+                    name: "active_users".to_string(), // Substring match
+                    columns: vec![],
+                    primary_key: vec![],
+                    indexes: vec![],
+                },
+            ],
+            foreign_keys: vec![],
+        };
+
+        state.update("SELECT * FROM User", 18, Some(&schema));
+
+        assert!(state.visible);
+        // Exact prefix "User" should match "Users" first
+        let texts: Vec<&str> = state.items.iter().map(|i| i.text.as_str()).collect();
+        assert!(
+            texts.iter().position(|t| *t == "Users")
+                < texts.iter().position(|t| *t == "users_archive"),
+            "Exact prefix match should rank before case-insensitive prefix"
+        );
+    }
+
+    #[test]
+    fn test_popup_height_capped() {
+        // Verify MAX_VISIBLE_ITEMS is 8 per FR-3.6
+        assert_eq!(
+            SqlCompletionPopup::MAX_VISIBLE_ITEMS,
+            8,
+            "Popup should show max 8 items per FR-3.6"
+        );
+
+        // Test popup_area caps height correctly
+        let input_area = Rect::new(0, 20, 80, 3);
+        let area = SqlCompletionPopup::popup_area(input_area, 20); // 20 items
+                                                                   // Height should be 8 + 2 (borders) = 10, not 20 + 2
+        assert_eq!(
+            area.height, 10,
+            "Popup height should be capped at 8 items + 2 borders"
         );
     }
 }
