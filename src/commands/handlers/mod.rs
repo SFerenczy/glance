@@ -28,6 +28,8 @@ pub struct CommandContext<'a> {
     pub current_connection: Option<&'a str>,
     /// Last executed SQL (for /savequery).
     pub last_executed_sql: Option<&'a str>,
+    /// Current input text (for /savequery when input is non-empty).
+    pub current_input: Option<&'a str>,
 }
 
 /// Result of executing a command.
@@ -60,6 +62,13 @@ pub enum CommandResult {
         messages: Vec<ChatMessage>,
         /// Updated database schema.
         schema: Schema,
+    },
+    /// Set the input bar content (e.g., for /usequery).
+    SetInput {
+        /// Content to set in the input bar.
+        content: String,
+        /// Optional message to display.
+        message: Option<ChatMessage>,
     },
     /// No action needed.
     None,

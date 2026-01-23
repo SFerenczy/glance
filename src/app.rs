@@ -77,6 +77,13 @@ pub enum InputResult {
         /// Updated database schema.
         schema: Schema,
     },
+    /// Set the input bar content (e.g., for /usequery).
+    SetInput {
+        /// Content to set in the input bar.
+        content: String,
+        /// Optional message to display.
+        message: Option<ChatMessage>,
+    },
 }
 
 /// The main orchestrator that coordinates all components.
@@ -282,6 +289,7 @@ impl Orchestrator {
             schema: &self.schema,
             current_connection: self.current_connection_name.as_deref(),
             last_executed_sql: self.last_executed_sql.as_deref(),
+            current_input: None, // Commands don't have access to prior input state
         };
 
         let result = match command {
@@ -387,6 +395,9 @@ impl Orchestrator {
             },
             CommandResult::SchemaRefresh { messages, schema } => {
                 InputResult::SchemaRefresh { messages, schema }
+            }
+            CommandResult::SetInput { content, message } => {
+                InputResult::SetInput { content, message }
             }
             CommandResult::None => InputResult::None,
         }

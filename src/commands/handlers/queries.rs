@@ -131,10 +131,14 @@ pub async fn handle_usequery(
         tracing::warn!("Failed to record query usage: {}", e);
     }
 
-    CommandResult::system(format!(
-        "Loaded query '{}'. Use /sql to execute:\n\n/sql {}",
-        query.name, query.sql
-    ))
+    // Insert the SQL into the input bar prefixed with /sql
+    CommandResult::SetInput {
+        content: format!("/sql {}", query.sql),
+        message: Some(ChatMessage::System(format!(
+            "Loaded query '{}' into input. Press Enter to execute.",
+            query.name
+        ))),
+    }
 }
 
 /// Handle /query delete command.
