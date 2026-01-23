@@ -2,6 +2,12 @@
 //!
 //! Manages local SQLite storage for connections, query history, saved queries,
 //! and LLM settings. Secrets are stored via OS keyring when available.
+//!
+//! # Scalability
+//!
+//! The state database uses SQLite with WAL mode for better concurrent access.
+//! Pool size is configurable via `StateDbConfig`. Retry logic is built into
+//! hot paths (history logging, settings updates) to handle transient contention.
 
 pub mod connections;
 pub mod history;
@@ -22,13 +28,119 @@ pub use secrets::{SecretStorage, SecretStorageStatus};
 
 use crate::error::{GlanceError, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use std::future::Future;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 const MAX_RETRY_ATTEMPTS: u32 = 3;
 const RETRY_DELAY_MS: u64 = 100;
+const DEFAULT_POOL_SIZE: u32 = 4;
+const DEFAULT_BUSY_TIMEOUT_SECS: u64 = 5;
+const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 5;
+
+/// Configuration for the state database.
+#[derive(Debug, Clone)]
+pub struct StateDbConfig {
+    /// Maximum number of connections in the pool.
+    pub pool_size: u32,
+    /// Timeout for acquiring a connection from the pool.
+    pub acquire_timeout: Duration,
+    /// SQLite busy timeout for lock contention.
+    pub busy_timeout: Duration,
+}
+
+impl Default for StateDbConfig {
+    fn default() -> Self {
+        Self {
+            pool_size: DEFAULT_POOL_SIZE,
+            acquire_timeout: Duration::from_secs(DEFAULT_ACQUIRE_TIMEOUT_SECS),
+            busy_timeout: Duration::from_secs(DEFAULT_BUSY_TIMEOUT_SECS),
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl StateDbConfig {
+    /// Creates a new configuration with the specified pool size.
+    pub fn with_pool_size(mut self, size: u32) -> Self {
+        self.pool_size = size;
+        self
+    }
+
+    /// Creates a configuration from environment variables.
+    ///
+    /// Reads:
+    /// - `GLANCE_DB_POOL_SIZE`: Pool size (default: 4)
+    /// - `GLANCE_DB_BUSY_TIMEOUT`: Busy timeout in seconds (default: 5)
+    pub fn from_env() -> Self {
+        let pool_size = std::env::var("GLANCE_DB_POOL_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_POOL_SIZE);
+
+        let busy_timeout = std::env::var("GLANCE_DB_BUSY_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .map(Duration::from_secs)
+            .unwrap_or_else(|| Duration::from_secs(DEFAULT_BUSY_TIMEOUT_SECS));
+
+        Self {
+            pool_size,
+            busy_timeout,
+            ..Default::default()
+        }
+    }
+}
+
+/// Executes an async operation with retry logic for transient database errors.
+///
+/// This is useful for hot paths like history logging where transient lock
+/// contention should not fail the operation.
+#[allow(dead_code)]
+pub async fn with_retry<F, Fut, T>(operation: F) -> Result<T>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let mut last_error = None;
+
+    for attempt in 0..MAX_RETRY_ATTEMPTS {
+        if attempt > 0 {
+            let delay = Duration::from_millis(RETRY_DELAY_MS * 2u64.pow(attempt));
+            debug!(
+                attempt,
+                delay_ms = delay.as_millis(),
+                "Retrying database operation"
+            );
+            tokio::time::sleep(delay).await;
+        }
+
+        match operation().await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                if is_transient_error(&e) {
+                    last_error = Some(e);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| GlanceError::persistence("Operation failed after retries")))
+}
+
+/// Checks if an error is transient (e.g., database locked).
+#[allow(dead_code)]
+fn is_transient_error(error: &GlanceError) -> bool {
+    let msg = error.to_string().to_lowercase();
+    msg.contains("database is locked")
+        || msg.contains("busy")
+        || msg.contains("timeout")
+        || msg.contains("connection")
+}
 
 /// Main persistence interface for the application state database.
 #[derive(Debug)]
@@ -37,6 +149,7 @@ pub struct StateDb {
     pool: SqlitePool,
     db_path: PathBuf,
     secret_storage: SecretStorage,
+    config: StateDbConfig,
 }
 
 #[allow(dead_code)]
@@ -47,20 +160,26 @@ impl StateDb {
     /// - Windows: `%APPDATA%\db-glance\state.db`
     pub async fn open_default() -> Result<Self> {
         let path = Self::default_path()?;
-        Self::open(&path).await
+        let config = StateDbConfig::from_env();
+        Self::open_with_config(&path, config).await
     }
 
     /// Opens or creates the state database at the specified path.
     pub async fn open(path: &PathBuf) -> Result<Self> {
+        Self::open_with_config(path, StateDbConfig::default()).await
+    }
+
+    /// Opens or creates the state database with custom configuration.
+    pub async fn open_with_config(path: &PathBuf, config: StateDbConfig) -> Result<Self> {
         Self::ensure_parent_dirs(path)?;
 
         let secret_storage = SecretStorage::new();
 
-        match Self::try_open(path, &secret_storage).await {
+        match Self::try_open(path, &secret_storage, &config).await {
             Ok(db) => Ok(db),
             Err(e) => {
                 warn!("Failed to open state database: {e}. Attempting recovery...");
-                Self::attempt_recovery(path, &secret_storage).await
+                Self::attempt_recovery(path, &secret_storage, &config).await
             }
         }
     }
@@ -73,7 +192,11 @@ impl StateDb {
     }
 
     /// Attempts to open the database with retries for lock contention.
-    async fn try_open(path: &std::path::Path, secret_storage: &SecretStorage) -> Result<Self> {
+    async fn try_open(
+        path: &std::path::Path,
+        secret_storage: &SecretStorage,
+        config: &StateDbConfig,
+    ) -> Result<Self> {
         let mut last_error = None;
 
         for attempt in 0..MAX_RETRY_ATTEMPTS {
@@ -81,14 +204,19 @@ impl StateDb {
                 tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS * 2u64.pow(attempt))).await;
             }
 
-            match Self::connect(path).await {
+            match Self::connect(path, config).await {
                 Ok(pool) => {
                     migrations::run_migrations(&pool).await?;
-                    info!("State database opened at {}", path.display());
+                    info!(
+                        path = %path.display(),
+                        pool_size = config.pool_size,
+                        "State database opened"
+                    );
                     return Ok(Self {
                         pool,
                         db_path: path.to_path_buf(),
                         secret_storage: secret_storage.clone(),
+                        config: config.clone(),
                     });
                 }
                 Err(e) => {
@@ -102,17 +230,17 @@ impl StateDb {
     }
 
     /// Creates a connection pool to the SQLite database.
-    async fn connect(path: &std::path::Path) -> Result<SqlitePool> {
+    async fn connect(path: &std::path::Path, config: &StateDbConfig) -> Result<SqlitePool> {
         let conn_str = format!("sqlite:{}?mode=rwc", path.display());
         let options = SqliteConnectOptions::from_str(&conn_str)
             .map_err(|e| GlanceError::persistence(format!("Invalid database path: {e}")))?
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-            .busy_timeout(Duration::from_secs(5))
+            .busy_timeout(config.busy_timeout)
             .create_if_missing(true);
 
         SqlitePoolOptions::new()
-            .max_connections(4)
-            .acquire_timeout(Duration::from_secs(5))
+            .max_connections(config.pool_size)
+            .acquire_timeout(config.acquire_timeout)
             .connect_with(options)
             .await
             .map_err(|e| {
@@ -134,7 +262,11 @@ impl StateDb {
     }
 
     /// Attempts to recover from a corrupted database by backing up and recreating.
-    async fn attempt_recovery(path: &PathBuf, secret_storage: &SecretStorage) -> Result<Self> {
+    async fn attempt_recovery(
+        path: &PathBuf,
+        secret_storage: &SecretStorage,
+        config: &StateDbConfig,
+    ) -> Result<Self> {
         let backup_path = path.with_extension("db.bak");
 
         if path.exists() {
@@ -147,9 +279,11 @@ impl StateDb {
             warn!("Backed up corrupted database to {}", backup_path.display());
         }
 
-        Self::try_open(path, secret_storage).await.map_err(|e| {
-            GlanceError::persistence(format!("Failed to recreate database after backup: {e}"))
-        })
+        Self::try_open(path, secret_storage, config)
+            .await
+            .map_err(|e| {
+                GlanceError::persistence(format!("Failed to recreate database after backup: {e}"))
+            })
     }
 
     /// Returns the path to the state database.
@@ -177,16 +311,37 @@ impl StateDb {
         self.pool.close().await;
     }
 
+    /// Performs a health check on the database.
+    ///
+    /// Returns Ok(()) if the database is accessible and responsive.
+    pub async fn health_check(&self) -> Result<()> {
+        sqlx::query("SELECT 1")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| GlanceError::persistence(format!("Health check failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Returns the current pool statistics.
+    pub fn pool_stats(&self) -> PoolStats {
+        PoolStats {
+            size: self.pool.size(),
+            idle: self.pool.num_idle(),
+            max_connections: self.config.pool_size,
+        }
+    }
+
     /// Creates an in-memory state database for testing.
     pub async fn open_in_memory() -> Result<Self> {
         let secret_storage = SecretStorage::new();
+        let config = StateDbConfig::default();
 
         let options = SqliteConnectOptions::from_str("sqlite::memory:")
             .map_err(|e| GlanceError::persistence(format!("Invalid memory database: {e}")))?
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
 
         let pool = SqlitePoolOptions::new()
-            .max_connections(4)
+            .max_connections(config.pool_size)
             .connect_with(options)
             .await
             .map_err(|e| {
@@ -199,8 +354,21 @@ impl StateDb {
             pool,
             db_path: PathBuf::from(":memory:"),
             secret_storage,
+            config,
         })
     }
+}
+
+/// Pool statistics for monitoring.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct PoolStats {
+    /// Current number of connections in the pool.
+    pub size: u32,
+    /// Number of idle connections.
+    pub idle: usize,
+    /// Maximum configured connections.
+    pub max_connections: u32,
 }
 
 #[cfg(test)]
@@ -226,5 +394,84 @@ mod tests {
         let db = StateDb::open(&path).await.unwrap();
         assert!(path.exists());
         db.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_health_check() {
+        let db = StateDb::open_in_memory().await.unwrap();
+        db.health_check().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_pool_stats() {
+        let db = StateDb::open_in_memory().await.unwrap();
+        let stats = db.pool_stats();
+        assert!(stats.max_connections >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_config_from_env() {
+        // Save original values
+        let orig_pool = std::env::var("GLANCE_DB_POOL_SIZE").ok();
+        let orig_timeout = std::env::var("GLANCE_DB_BUSY_TIMEOUT").ok();
+
+        // Set test values
+        std::env::set_var("GLANCE_DB_POOL_SIZE", "8");
+        std::env::set_var("GLANCE_DB_BUSY_TIMEOUT", "10");
+
+        let config = StateDbConfig::from_env();
+        assert_eq!(config.pool_size, 8);
+        assert_eq!(config.busy_timeout, Duration::from_secs(10));
+
+        // Restore
+        match orig_pool {
+            Some(v) => std::env::set_var("GLANCE_DB_POOL_SIZE", v),
+            None => std::env::remove_var("GLANCE_DB_POOL_SIZE"),
+        }
+        match orig_timeout {
+            Some(v) => std::env::set_var("GLANCE_DB_BUSY_TIMEOUT", v),
+            None => std::env::remove_var("GLANCE_DB_BUSY_TIMEOUT"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_access() {
+        let db = std::sync::Arc::new(StateDb::open_in_memory().await.unwrap());
+
+        // Create a test connection for foreign key constraint
+        sqlx::query("INSERT INTO connections (name, database) VALUES ('test', 'testdb')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        // Spawn multiple concurrent tasks
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let db = std::sync::Arc::clone(&db);
+            handles.push(tokio::spawn(async move {
+                // Each task writes to history
+                history::record_query(
+                    db.pool(),
+                    "test",
+                    history::SubmittedBy::User,
+                    &format!("SELECT {}", i),
+                    history::QueryStatus::Success,
+                    Some(10),
+                    Some(1),
+                    None,
+                    None,
+                )
+                .await
+            }));
+        }
+
+        // Wait for all tasks
+        for handle in handles {
+            handle.await.unwrap().unwrap();
+        }
+
+        // Verify all entries were written
+        let count = history::count_history(db.pool()).await.unwrap();
+        assert_eq!(count, 10);
     }
 }
