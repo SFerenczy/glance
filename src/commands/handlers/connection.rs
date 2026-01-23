@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::{CommandContext, CommandResult};
-use crate::commands::router::{ConnectionAddArgs, ConnectionEditArgs};
+use crate::commands::router::{ConnectionAddArgs, ConnectionDeleteArgs, ConnectionEditArgs};
 use crate::config::ConnectionConfig;
 use crate::db::{DatabaseBackend, DatabaseClient, Schema};
 use crate::persistence::{self, ConnectionProfile, StateDb};
@@ -228,10 +228,17 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
             } else {
                 ""
             };
-            CommandResult::system(format!(
+            let mut msg = format!(
                 "Connection '{}' saved{}. Use /connect {} to use it.",
                 args.name, test_msg, args.name
-            ))
+            );
+
+            // Warn about plaintext password storage if keyring unavailable
+            if args.password.is_some() && !state_db.secrets().is_secure() {
+                msg.push_str("\n\n⚠️  Warning: OS keyring unavailable. Password stored as plaintext.");
+            }
+
+            CommandResult::system(msg)
         }
         Err(e) => CommandResult::error(e.to_string()),
     }
@@ -307,21 +314,49 @@ pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>
     )
     .await
     {
-        Ok(()) => CommandResult::system(format!("Connection '{}' updated.", args.name)),
+        Ok(()) => {
+            let mut msg = format!("Connection '{}' updated.", args.name);
+
+            // Warn about plaintext password storage if keyring unavailable
+            if args.password.is_some() && !state_db.secrets().is_secure() {
+                msg.push_str("\n\n⚠️  Warning: OS keyring unavailable. Password stored as plaintext.");
+            }
+
+            CommandResult::system(msg)
+        }
         Err(e) => CommandResult::error(e.to_string()),
     }
 }
 
 /// Handle /conn delete command.
-pub async fn handle_conn_delete(name: &str, state_db: &Arc<StateDb>) -> CommandResult {
-    if name.is_empty() {
-        return CommandResult::error("Usage: /conn delete <name>");
+pub async fn handle_conn_delete(args: &ConnectionDeleteArgs, state_db: &Arc<StateDb>) -> CommandResult {
+    if args.name.is_empty() {
+        return CommandResult::error("Usage: /conn delete <name> [--confirm]");
     }
 
-    match persistence::connections::delete_connection(state_db.pool(), name, state_db.secrets())
+    // Check if connection exists first
+    match persistence::connections::get_connection(state_db.pool(), &args.name).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return CommandResult::error(format!("Connection '{}' not found.", args.name));
+        }
+        Err(e) => return CommandResult::error(e.to_string()),
+    }
+
+    // Require explicit confirmation
+    if !args.confirmed {
+        return CommandResult::system(format!(
+            "Are you sure you want to delete connection '{}'?\n\
+             This action cannot be undone.\n\n\
+             To confirm, run: /conn delete {} --confirm",
+            args.name, args.name
+        ));
+    }
+
+    match persistence::connections::delete_connection(state_db.pool(), &args.name, state_db.secrets())
         .await
     {
-        Ok(()) => CommandResult::system(format!("Connection '{}' deleted.", name)),
+        Ok(()) => CommandResult::system(format!("Connection '{}' deleted.", args.name)),
         Err(e) => CommandResult::error(e.to_string()),
     }
 }

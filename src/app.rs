@@ -320,9 +320,9 @@ impl Orchestrator {
                 let state_db = require_state_db!(self);
                 connection::handle_conn_edit(&args, &state_db).await
             }
-            Command::ConnectionDelete(name) => {
+            Command::ConnectionDelete(args) => {
                 let state_db = require_state_db!(self);
-                connection::handle_conn_delete(&name, &state_db).await
+                connection::handle_conn_delete(&args, &state_db).await
             }
             Command::History(args) => history::handle_history(&ctx, &args).await,
             Command::HistoryClear => history::handle_history_clear(&ctx).await,

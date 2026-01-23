@@ -27,6 +27,15 @@ pub struct ConnectionAddArgs {
     pub test: bool,
 }
 
+/// Arguments for connection delete command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionDeleteArgs {
+    /// Connection name to delete.
+    pub name: String,
+    /// Whether deletion is confirmed.
+    pub confirmed: bool,
+}
+
 /// Arguments for connection edit command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionEditArgs {
@@ -134,7 +143,7 @@ pub enum Command {
     /// Edit an existing connection.
     ConnectionEdit(ConnectionEditArgs),
     /// Delete a connection.
-    ConnectionDelete(String),
+    ConnectionDelete(ConnectionDeleteArgs),
     /// Show query history.
     History(HistoryArgs),
     /// Clear query history (requires --confirm flag).
@@ -257,7 +266,7 @@ impl CommandRouter {
                 }
                 Self::parse_conn_edit_args(rest)
             }
-            "delete" => Command::ConnectionDelete(rest.to_string()),
+            "delete" => Self::parse_conn_delete_args(rest),
             _ if !subcommand.is_empty() && subcommand.contains('=') => {
                 Self::parse_conn_add_args(args)
             }
@@ -309,6 +318,25 @@ impl CommandRouter {
             sslmode,
             test,
         })
+    }
+
+    /// Parse connection delete arguments.
+    fn parse_conn_delete_args(args: &str) -> Command {
+        let mut name = String::new();
+        let mut confirmed = false;
+
+        let tokens = tokenize(args);
+
+        for token in tokens {
+            match token {
+                Token::LongFlag(flag) if flag == "confirm" => confirmed = true,
+                Token::ShortFlag('y') => confirmed = true,
+                Token::Word(word) if name.is_empty() => name = word,
+                _ => {}
+            }
+        }
+
+        Command::ConnectionDelete(ConnectionDeleteArgs { name, confirmed })
     }
 
     /// Parse connection edit arguments using the tokenizer.
@@ -604,10 +632,35 @@ mod tests {
 
     #[test]
     fn test_parse_conn_delete() {
-        assert!(matches!(
-            CommandRouter::parse("/conn delete mydb"),
-            Command::ConnectionDelete(s) if s == "mydb"
-        ));
+        let cmd = CommandRouter::parse("/conn delete mydb");
+        if let Command::ConnectionDelete(args) = cmd {
+            assert_eq!(args.name, "mydb");
+            assert!(!args.confirmed);
+        } else {
+            panic!("Expected ConnectionDelete");
+        }
+    }
+
+    #[test]
+    fn test_parse_conn_delete_with_confirm() {
+        let cmd = CommandRouter::parse("/conn delete mydb --confirm");
+        if let Command::ConnectionDelete(args) = cmd {
+            assert_eq!(args.name, "mydb");
+            assert!(args.confirmed);
+        } else {
+            panic!("Expected ConnectionDelete");
+        }
+    }
+
+    #[test]
+    fn test_parse_conn_delete_with_short_flag() {
+        let cmd = CommandRouter::parse("/conn delete mydb -y");
+        if let Command::ConnectionDelete(args) = cmd {
+            assert_eq!(args.name, "mydb");
+            assert!(args.confirmed);
+        } else {
+            panic!("Expected ConnectionDelete");
+        }
     }
 
     #[test]

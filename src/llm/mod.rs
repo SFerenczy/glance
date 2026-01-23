@@ -27,7 +27,10 @@ pub use mock::MockLlmClient;
 pub use ollama::{OllamaClient, OllamaConfig};
 pub use openai::{OpenAiClient, OpenAiConfig};
 pub use parser::{parse_llm_response, ParsedResponse};
-pub use prompt::{build_messages, build_messages_cached, build_system_prompt, PromptCache};
+pub use prompt::{
+    build_messages, build_messages_cached, build_system_prompt, build_system_prompt_with_context,
+    ConnectionContext, PromptCache,
+};
 pub use service::{LlmResult, LlmService, ToolContext};
 pub use tools::{
     format_saved_queries_for_llm, get_tool_definitions, ListSavedQueriesInput, SavedQueryOutput,
