@@ -408,9 +408,10 @@ impl Tui {
                             return;
                         }
                         KeyCode::Char('n') | KeyCode::Esc => {
-                            // Cancel the pending query
+                            // Cancel the pending query - get SQL before clearing
+                            let sql = app_state.pending_query.as_ref().map(|p| p.sql.clone());
                             app_state.clear_pending_query();
-                            let _ = handle.cancel_pending_query().await;
+                            let _ = handle.cancel_pending_query(sql).await;
                             return;
                         }
                         _ => return, // Ignore other keys when dialog is shown

@@ -107,7 +107,8 @@ pub enum OrchestratorCommand {
     /// Cancel all operations (current + queued).
     CancelAll,
     /// Cancel a pending query (synchronous, no DB/LLM call).
-    CancelPendingQuery,
+    /// The SQL is passed so it can be recorded in history.
+    CancelPendingQuery { sql: Option<String> },
     /// Gracefully close the actor and its resources.
     Shutdown,
 }
@@ -469,8 +470,8 @@ impl OrchestratorActor {
                     self.cancel_all().await;
                 }
 
-                OrchestratorCommand::CancelPendingQuery => {
-                    let msg = self.orchestrator.cancel_query();
+                OrchestratorCommand::CancelPendingQuery { sql } => {
+                    let msg = self.orchestrator.cancel_query(sql.as_deref()).await;
                     let _ = self
                         .response_tx
                         .send(OrchestratorResponse::PendingQueryCancelled { message: msg })
@@ -578,9 +579,10 @@ impl OrchestratorHandle {
     }
 
     /// Cancels a pending query (the confirmation dialog state).
-    pub async fn cancel_pending_query(&self) -> Result<()> {
+    /// Pass the SQL so it can be recorded in history as cancelled.
+    pub async fn cancel_pending_query(&self, sql: Option<String>) -> Result<()> {
         self.sender
-            .send(OrchestratorCommand::CancelPendingQuery)
+            .send(OrchestratorCommand::CancelPendingQuery { sql })
             .await
             .map_err(|_| GlanceError::internal("Orchestrator actor closed"))
     }

@@ -79,11 +79,17 @@ impl<'a> QueryExecutor<'a> {
             Err(e) => (QueryStatus::Error, None, Some(e.to_string())),
         };
 
-        if let Some(state_db) = self.state_db {
+        // Record to history only if we have a valid connection name (skip for unsaved connections)
+        if let (Some(state_db), Some(conn_name)) = (self.state_db, self.connection_name) {
             let pool = state_db.pool().clone();
+            // Map QuerySource to SubmittedBy
+            let submitted_by = match source {
+                QuerySource::Manual => SubmittedBy::User,
+                QuerySource::Generated | QuerySource::Auto => SubmittedBy::Llm,
+            };
             let params = OwnedRecordQueryParams {
-                connection_name: self.connection_name.unwrap_or("default").to_string(),
-                submitted_by: SubmittedBy::User,
+                connection_name: conn_name.to_string(),
+                submitted_by,
                 sql: sql.to_string(),
                 status,
                 execution_time_ms: Some(execution_time.as_millis() as i64),

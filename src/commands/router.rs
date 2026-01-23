@@ -137,8 +137,8 @@ pub enum Command {
     ConnectionDelete(String),
     /// Show query history.
     History(HistoryArgs),
-    /// Clear query history.
-    HistoryClear,
+    /// Clear query history (requires --confirm flag).
+    HistoryClear { confirmed: bool },
     /// Save the last executed query.
     SaveQuery(SaveQueryArgs),
     /// List saved queries.
@@ -355,8 +355,12 @@ impl CommandRouter {
 
     /// Parse /history command arguments using the tokenizer.
     fn parse_history_command(args: &str) -> Command {
-        if args.trim() == "clear" {
-            return Command::HistoryClear;
+        let trimmed = args.trim();
+        if trimmed == "clear" {
+            return Command::HistoryClear { confirmed: false };
+        }
+        if trimmed == "clear --confirm" || trimmed == "clear -y" {
+            return Command::HistoryClear { confirmed: true };
         }
 
         let mut history_args = HistoryArgs::default();

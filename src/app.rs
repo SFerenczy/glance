@@ -758,12 +758,17 @@ impl Orchestrator {
             Err(e) => (QueryStatus::Error, None, Some(e.to_string())),
         };
 
-        if let Some(state_db) = &self.state_db {
-            let conn_name = self.current_connection_name.as_deref().unwrap_or("default");
+        // Record to history only if we have a connection name (skip for unsaved connections)
+        if let (Some(state_db), Some(conn_name)) = (&self.state_db, &self.current_connection_name) {
+            // Map QuerySource to SubmittedBy
+            let submitted_by = match source {
+                QuerySource::Manual => SubmittedBy::User,
+                QuerySource::Generated | QuerySource::Auto => SubmittedBy::Llm,
+            };
             let _ = persistence::history::record_query(
                 state_db.pool(),
                 conn_name,
-                SubmittedBy::User,
+                submitted_by,
                 sql,
                 status,
                 Some(execution_time.as_millis() as i64),
@@ -798,8 +803,25 @@ impl Orchestrator {
             .await
     }
 
-    /// Cancels a pending query.
-    pub fn cancel_query(&self) -> ChatMessage {
+    /// Cancels a pending query and records it in history.
+    pub async fn cancel_query(&mut self, sql: Option<&str>) -> ChatMessage {
+        // Record the cancellation in history if we have SQL and a connection
+        if let (Some(sql), Some(state_db), Some(conn_name)) =
+            (sql, &self.state_db, &self.current_connection_name)
+        {
+            let _ = persistence::history::record_query(
+                state_db.pool(),
+                conn_name,
+                SubmittedBy::Llm, // Cancelled queries are typically LLM-generated (from confirmation dialog)
+                sql,
+                QueryStatus::Cancelled,
+                None, // No execution time
+                None, // No row count
+                None, // No error message
+                None, // No saved_query_id
+            )
+            .await;
+        }
         ChatMessage::System("Query cancelled.".to_string())
     }
 
