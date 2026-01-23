@@ -1,8 +1,18 @@
 //! LLM service for orchestrating natural language to SQL conversion.
 //!
-//! Encapsulates LLM interaction, prompt building, and tool handling.
+//! This module provides the unified NL→SQL pipeline used by both TUI and headless modes.
+//! It encapsulates LLM interaction, prompt building, tool handling, and response parsing.
+//!
+//! # Architecture
+//!
+//! The `LlmService` is the single entry point for all natural language processing:
+//! - TUI mode: `Orchestrator::handle_input()` → `LlmService::process_query()`
+//! - Headless mode: `HeadlessRunner` → `Orchestrator::handle_input()` → `LlmService::process_query()`
+//!
+//! This ensures identical behavior and logging across all execution modes.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::db::Schema;
 use crate::error::Result;
@@ -49,6 +59,15 @@ impl LlmService {
     }
 
     /// Process natural language input and return SQL or explanation.
+    ///
+    /// This is the unified entry point for all NL→SQL processing, used by both
+    /// TUI and headless modes. It handles:
+    /// - Prompt building with caching
+    /// - LLM completion with tool support
+    /// - Tool execution (e.g., list_saved_queries)
+    /// - Response parsing to extract SQL
+    ///
+    /// All processing is logged via tracing for observability.
     pub async fn process_query(
         &mut self,
         input: &str,
@@ -56,14 +75,34 @@ impl LlmService {
         conversation: &mut Conversation,
         tool_context: &ToolContext<'_>,
     ) -> Result<LlmResult> {
+        let start = Instant::now();
+        tracing::debug!(input_len = input.len(), "Starting NL→SQL processing");
+
         conversation.add_user(input);
 
         let messages = build_messages_cached(&mut self.prompt_cache, schema, conversation);
         let tools = get_tool_definitions();
 
+        tracing::debug!(
+            message_count = messages.len(),
+            tool_count = tools.len(),
+            "Sending request to LLM"
+        );
+
+        let llm_start = Instant::now();
         let mut response = self.client.complete_with_tools(&messages, &tools).await?;
+        let llm_duration = llm_start.elapsed();
+
+        tracing::debug!(
+            llm_duration_ms = llm_duration.as_millis(),
+            has_tool_calls = response.has_tool_calls(),
+            response_len = response.content.len(),
+            "Received LLM response"
+        );
 
         if response.has_tool_calls() {
+            let tool_count = response.tool_calls.len();
+            tracing::debug!(tool_count, "Processing tool calls");
             response = self
                 .handle_tool_calls(response, &tools, schema, conversation, tool_context)
                 .await?;
@@ -72,10 +111,17 @@ impl LlmService {
         conversation.add_assistant(&response.content);
 
         let parsed = parse_llm_response(&response.content);
+        let total_duration = start.elapsed();
 
-        if let Some(sql) = parsed.sql {
+        if let Some(ref sql) = parsed.sql {
+            tracing::info!(
+                total_duration_ms = total_duration.as_millis(),
+                sql_len = sql.len(),
+                has_explanation = !parsed.text.is_empty(),
+                "NL→SQL processing complete: generated SQL"
+            );
             Ok(LlmResult::Sql {
-                sql,
+                sql: sql.clone(),
                 explanation: if parsed.text.is_empty() {
                     None
                 } else {
@@ -83,6 +129,11 @@ impl LlmService {
                 },
             })
         } else {
+            tracing::info!(
+                total_duration_ms = total_duration.as_millis(),
+                explanation_len = parsed.text.len(),
+                "NL→SQL processing complete: explanation only"
+            );
             Ok(LlmResult::Explanation(parsed.text))
         }
     }
@@ -122,16 +173,31 @@ impl LlmService {
         arguments: &str,
         tool_context: &ToolContext<'_>,
     ) -> String {
-        match name {
+        let start = Instant::now();
+        tracing::debug!(tool_name = name, "Executing tool");
+
+        let result = match name {
             "list_saved_queries" => {
                 self.execute_list_saved_queries(arguments, tool_context)
                     .await
             }
-            _ => serde_json::json!({
-                "error": format!("Unknown tool: {}", name)
-            })
-            .to_string(),
-        }
+            _ => {
+                tracing::warn!(tool_name = name, "Unknown tool requested");
+                serde_json::json!({
+                    "error": format!("Unknown tool: {}", name)
+                })
+                .to_string()
+            }
+        };
+
+        tracing::debug!(
+            tool_name = name,
+            duration_ms = start.elapsed().as_millis(),
+            result_len = result.len(),
+            "Tool execution complete"
+        );
+
+        result
     }
 
     /// Execute the list_saved_queries tool.
