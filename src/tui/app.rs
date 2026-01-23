@@ -691,13 +691,16 @@ impl App {
                 }
 
                 match key.code {
-                    // Ctrl+C: copy selection if present, otherwise exit
+                    // Ctrl+C: close palette if visible, copy selection if present, otherwise exit
                     KeyCode::Char('c')
                         if key
                             .modifiers
                             .contains(crossterm::event::KeyModifiers::CONTROL) =>
                     {
-                        if self.text_selection.is_some() {
+                        if self.command_palette.visible {
+                            self.input.clear();
+                            self.command_palette.close();
+                        } else if self.text_selection.is_some() {
                             self.copy_selection();
                         } else {
                             self.running = false;
@@ -1017,7 +1020,7 @@ impl App {
             }
             // Text input
             KeyCode::Char(c) => {
-                if c == '/' && self.input.is_empty() {
+                if c == '/' && self.input.cursor == 0 {
                     self.input.insert(c);
                     self.command_palette.open();
                 } else {
@@ -1401,7 +1404,7 @@ impl App {
             // Text input
             KeyCode::Char(c) => {
                 // Check if this triggers command palette
-                if c == '/' && self.input.is_empty() {
+                if c == '/' && self.input.cursor == 0 {
                     self.input.insert(c);
                     self.command_palette.open();
                 } else {

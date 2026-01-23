@@ -149,9 +149,9 @@ impl CommandPaletteState {
     fn update_filtered(&mut self) {
         self.filtered_commands.clear();
 
+        // Require at least 1 character to show filtered results (per FR-2.3)
         if self.filter.is_empty() {
-            // Show all commands when filter is empty
-            self.filtered_commands.extend(0..COMMANDS.len());
+            // Show nothing when filter is empty - user must type at least 1 char
         } else {
             // Score and sort commands by match quality
             let filter_lower = self.filter.to_lowercase();
@@ -348,10 +348,11 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_empty_shows_all() {
+    fn test_filter_empty_shows_nothing() {
         let mut state = CommandPaletteState::new();
         state.open();
-        assert_eq!(state.filtered_commands.len(), COMMANDS.len());
+        // Per FR-2.3: Minimum 1 character after `/` to filter
+        assert_eq!(state.filtered_commands.len(), 0);
     }
 
     #[test]
@@ -380,8 +381,11 @@ mod tests {
     fn test_navigation() {
         let mut state = CommandPaletteState::new();
         state.open();
+        // Need to set a filter to have items to navigate (empty filter shows nothing)
+        state.set_filter("s");
 
         assert_eq!(state.selected, 0);
+        assert!(!state.filtered_commands.is_empty());
 
         state.select_next();
         assert_eq!(state.selected, 1);
