@@ -8,6 +8,7 @@ mod connection;
 mod db;
 mod error;
 mod llm;
+mod logging;
 mod persistence;
 mod query;
 mod safety;
@@ -18,7 +19,6 @@ use config::{Config, ConnectionConfig};
 use error::{GlanceError, Result};
 use llm::LlmProvider;
 use tracing::{error, info, warn};
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
@@ -32,22 +32,23 @@ async fn main() {
         }
     }
 
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    // Parse CLI early to determine mode
+    let cli = Cli::parse_args();
 
-    if let Err(e) = run().await {
+    // Initialize logging - file-based for TUI mode, stderr for headless
+    if cli.is_headless() {
+        logging::init_stderr_logging();
+    } else {
+        logging::init_file_logging();
+    }
+
+    if let Err(e) = run(cli).await {
         error!("{}: {}", e.category(), e);
         std::process::exit(1);
     }
 }
 
-async fn run() -> Result<()> {
-    // Parse CLI arguments
-    let cli = Cli::parse_args();
+async fn run(cli: Cli) -> Result<()> {
 
     // Handle headless mode
     if cli.is_headless() {
