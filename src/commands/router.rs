@@ -9,6 +9,8 @@ use super::tokenizer::{tokenize, Token};
 pub struct ConnectionAddArgs {
     /// Connection name.
     pub name: String,
+    /// Database backend (postgres, mysql, etc.).
+    pub backend: Option<String>,
     /// Host address.
     pub host: Option<String>,
     /// Port number.
@@ -30,6 +32,8 @@ pub struct ConnectionAddArgs {
 pub struct ConnectionEditArgs {
     /// Connection name.
     pub name: String,
+    /// Database backend (if updating).
+    pub backend: Option<String>,
     /// Host address (if updating).
     pub host: Option<String>,
     /// Port number (if updating).
@@ -226,6 +230,7 @@ impl CommandRouter {
                 if rest.is_empty() {
                     return Command::ConnectionAdd(ConnectionAddArgs {
                         name: String::new(),
+                        backend: None,
                         host: None,
                         port: 5432,
                         database: None,
@@ -241,6 +246,7 @@ impl CommandRouter {
                 if rest.is_empty() {
                     return Command::ConnectionEdit(ConnectionEditArgs {
                         name: String::new(),
+                        backend: None,
                         host: None,
                         port: None,
                         database: None,
@@ -262,6 +268,7 @@ impl CommandRouter {
     /// Parse connection add arguments using the tokenizer.
     fn parse_conn_add_args(args: &str) -> Command {
         let mut name = String::new();
+        let mut backend = None;
         let mut host = None;
         let mut port = 5432u16;
         let mut database = None;
@@ -275,6 +282,7 @@ impl CommandRouter {
         for token in tokens {
             match token {
                 Token::KeyValue { key, value } => match key.as_str() {
+                    "backend" => backend = Some(value),
                     "host" => host = Some(value),
                     "port" => port = value.parse().unwrap_or(5432),
                     "database" | "db" => database = Some(value),
@@ -292,6 +300,7 @@ impl CommandRouter {
 
         Command::ConnectionAdd(ConnectionAddArgs {
             name,
+            backend,
             host,
             port,
             database,
@@ -305,6 +314,7 @@ impl CommandRouter {
     /// Parse connection edit arguments using the tokenizer.
     fn parse_conn_edit_args(args: &str) -> Command {
         let mut name = String::new();
+        let mut backend = None;
         let mut host = None;
         let mut port = None;
         let mut database = None;
@@ -317,6 +327,7 @@ impl CommandRouter {
         for token in tokens {
             match token {
                 Token::KeyValue { key, value } => match key.as_str() {
+                    "backend" => backend = Some(value),
                     "host" => host = Some(value),
                     "port" => port = value.parse().ok(),
                     "database" | "db" => database = Some(value),
@@ -332,6 +343,7 @@ impl CommandRouter {
 
         Command::ConnectionEdit(ConnectionEditArgs {
             name,
+            backend,
             host,
             port,
             database,
@@ -750,6 +762,31 @@ mod tests {
             assert_eq!(args.password, Some("p@ss=word!".to_string()));
         } else {
             panic!("Expected ConnectionAdd");
+        }
+    }
+
+    #[test]
+    fn test_parse_conn_add_with_backend() {
+        let cmd =
+            CommandRouter::parse("/conn add mydb backend=postgres host=localhost database=test");
+        if let Command::ConnectionAdd(args) = cmd {
+            assert_eq!(args.name, "mydb");
+            assert_eq!(args.backend, Some("postgres".to_string()));
+            assert_eq!(args.host, Some("localhost".to_string()));
+            assert_eq!(args.database, Some("test".to_string()));
+        } else {
+            panic!("Expected ConnectionAdd");
+        }
+    }
+
+    #[test]
+    fn test_parse_conn_edit_with_backend() {
+        let cmd = CommandRouter::parse("/conn edit mydb backend=postgres");
+        if let Command::ConnectionEdit(args) = cmd {
+            assert_eq!(args.name, "mydb");
+            assert_eq!(args.backend, Some("postgres".to_string()));
+        } else {
+            panic!("Expected ConnectionEdit");
         }
     }
 

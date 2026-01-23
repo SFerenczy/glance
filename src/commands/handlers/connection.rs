@@ -142,7 +142,7 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
     if args.name.is_empty() {
         return CommandResult::system(
             "To add a connection, provide details in format:\n\
-             /conn add <name> host=<host> port=<port> database=<db> user=<user> [password=<pwd>] [sslmode=<mode>]\n\n\
+             /conn add <name> [backend=postgres] host=<host> port=<port> database=<db> user=<user> [password=<pwd>] [sslmode=<mode>]\n\n\
              Example: /conn add mydb host=localhost port=5432 database=mydb user=postgres"
         );
     }
@@ -153,11 +153,32 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
 
     let db_name = args.database.clone().unwrap();
 
+    // Parse backend, defaulting to postgres
+    let backend = match &args.backend {
+        Some(b) => match DatabaseBackend::parse(b) {
+            Some(backend) => backend,
+            None => {
+                return CommandResult::error(format!(
+                    "Unknown backend '{}'. Supported: postgres",
+                    b
+                ));
+            }
+        },
+        None => DatabaseBackend::default(),
+    };
+
+    // Use backend-specific default port if not specified
+    let port = if args.port == 5432 && args.backend.is_some() {
+        backend.default_port()
+    } else {
+        args.port
+    };
+
     if args.test {
         let test_config = ConnectionConfig {
-            backend: DatabaseBackend::default(),
+            backend,
             host: args.host.clone(),
-            port: args.port,
+            port,
             database: args.database.clone(),
             user: args.user.clone(),
             password: args.password.clone(),
@@ -180,10 +201,10 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
 
     let profile = ConnectionProfile {
         name: args.name.clone(),
-        backend: DatabaseBackend::default(),
+        backend,
         database: db_name,
         host: args.host.clone(),
-        port: args.port,
+        port,
         username: args.user.clone(),
         sslmode: args.sslmode.clone(),
         extras: None,
@@ -223,7 +244,8 @@ pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>
     }
 
     // Check if any fields are being updated
-    let has_updates = args.host.is_some()
+    let has_updates = args.backend.is_some()
+        || args.host.is_some()
         || args.port.is_some()
         || args.database.is_some()
         || args.user.is_some()
@@ -234,7 +256,7 @@ pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>
         return CommandResult::system(format!(
             "To edit connection '{}', use:\n\
              /conn edit {} <field>=<value> ...\n\n\
-             Fields: host, port, database, user, password, sslmode",
+             Fields: backend, host, port, database, user, password, sslmode",
             args.name, args.name
         ));
     }
@@ -248,9 +270,23 @@ pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>
         Err(e) => return CommandResult::error(e.to_string()),
     };
 
+    // Parse backend if provided
+    let backend = match &args.backend {
+        Some(b) => match DatabaseBackend::parse(b) {
+            Some(backend) => backend,
+            None => {
+                return CommandResult::error(format!(
+                    "Unknown backend '{}'. Supported: postgres",
+                    b
+                ));
+            }
+        },
+        None => existing.backend,
+    };
+
     let updated_profile = ConnectionProfile {
         name: args.name.clone(),
-        backend: existing.backend,
+        backend,
         database: args.database.clone().unwrap_or(existing.database),
         host: args.host.clone().or(existing.host),
         port: args.port.unwrap_or(existing.port),
