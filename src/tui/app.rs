@@ -352,6 +352,8 @@ pub struct App {
     pub text_selection: Option<TextSelection>,
     /// The area where the chat panel was last rendered (for mouse hit testing).
     pub chat_area: Option<ratatui::layout::Rect>,
+    /// The area where the banner was last rendered (for connection status indicator).
+    pub banner_area: Option<ratatui::layout::Rect>,
     /// SQL completion state for /sql mode.
     pub sql_completion: SqlCompletionState,
     /// Database schema for completions.
@@ -429,6 +431,7 @@ impl App {
             vim_mode_enabled: false, // Vim mode disabled by default
             text_selection: None,
             chat_area: None,
+            banner_area: None,
             sql_completion: SqlCompletionState::new(),
             schema: None,
             input_area: None,
