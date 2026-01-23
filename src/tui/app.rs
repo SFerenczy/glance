@@ -333,8 +333,9 @@ pub struct App {
     /// Last executed SQL query (for copy/re-run features).
     pub last_executed_sql: Option<String>,
     /// Timestamp of last Esc press (for double-Esc detection).
-    #[allow(dead_code)] // Used in Phase 8.1
     pub last_esc_time: Option<Instant>,
+    /// Flag indicating a cancellation was requested via double-Esc.
+    pub cancel_requested: bool,
     /// Toast notification message and expiry time.
     pub toast: Option<(String, Instant)>,
     /// Flag indicating a re-run of the last SQL was requested.
@@ -351,14 +352,23 @@ pub struct App {
     pub text_selection: Option<TextSelection>,
     /// The area where the chat panel was last rendered (for mouse hit testing).
     pub chat_area: Option<ratatui::layout::Rect>,
-    /// The area where the "new messages" banner is rendered (for click detection).
-    pub banner_area: Option<ratatui::layout::Rect>,
     /// SQL completion state for /sql mode.
     pub sql_completion: SqlCompletionState,
     /// Database schema for completions.
     pub schema: Option<Schema>,
     /// The area where the input bar was last rendered (for popup positioning).
     pub input_area: Option<ratatui::layout::Rect>,
+    /// Pending multi-line paste awaiting user confirmation.
+    pub pending_paste: Option<PendingPaste>,
+}
+
+/// A multi-line paste that may need user confirmation.
+#[derive(Debug, Clone)]
+pub struct PendingPaste {
+    /// The original pasted text.
+    pub text: String,
+    /// Whether this appears to contain multiple SQL statements.
+    pub has_multiple_statements: bool,
 }
 
 /// Represents a text selection in the chat panel.
@@ -410,6 +420,7 @@ impl App {
             spinner: None,
             last_executed_sql: None,
             last_esc_time: None,
+            cancel_requested: false,
             toast: None,
             rerun_requested: false,
             show_help: false,
@@ -418,10 +429,10 @@ impl App {
             vim_mode_enabled: false, // Vim mode disabled by default
             text_selection: None,
             chat_area: None,
-            banner_area: None,
             sql_completion: SqlCompletionState::new(),
             schema: None,
             input_area: None,
+            pending_paste: None,
         }
     }
 
@@ -461,6 +472,34 @@ impl App {
     /// Takes and clears the bell request.
     pub fn take_bell_request(&mut self) -> bool {
         std::mem::take(&mut self.ring_bell)
+    }
+
+    /// Takes and clears the cancellation request.
+    pub fn take_cancel_request(&mut self) -> bool {
+        std::mem::take(&mut self.cancel_requested)
+    }
+
+    /// Handles Esc key press with double-Esc detection for cancellation.
+    /// Returns true if this was a double-Esc (cancellation requested).
+    fn handle_esc_for_cancel(&mut self) -> bool {
+        let now = Instant::now();
+        let double_esc_threshold = Duration::from_millis(500);
+
+        if let Some(last_time) = self.last_esc_time {
+            if now.duration_since(last_time) < double_esc_threshold {
+                // Double-Esc detected
+                self.last_esc_time = None;
+                if self.is_processing {
+                    self.cancel_requested = true;
+                    self.input.clear();
+                    self.show_toast("Cancelling operation...");
+                    return true;
+                }
+            }
+        }
+
+        self.last_esc_time = Some(now);
+        false
     }
 
     /// Clears expired toast notifications.
@@ -630,9 +669,6 @@ impl App {
         }
 
         if let Some(item) = self.sql_completion.selected_item().cloned() {
-            // Record completion for recency ranking
-            self.sql_completion.record_completion(&item.text);
-
             // Calculate the replacement range
             let filter_len = self.sql_completion.filter.len();
             let sql_cursor = self.sql_cursor();
@@ -697,16 +733,13 @@ impl App {
                 }
 
                 match key.code {
-                    // Ctrl+C: close palette if visible, copy selection if present, otherwise exit
+                    // Ctrl+C: copy selection if present, otherwise exit
                     KeyCode::Char('c')
                         if key
                             .modifiers
                             .contains(crossterm::event::KeyModifiers::CONTROL) =>
                     {
-                        if self.command_palette.visible {
-                            self.input.clear();
-                            self.command_palette.close();
-                        } else if self.text_selection.is_some() {
+                        if self.text_selection.is_some() {
                             self.copy_selection();
                         } else {
                             self.running = false;
@@ -730,11 +763,11 @@ impl App {
                         self.handle_input_key(key);
                     }
 
-                    // Chat scrolling (when chat is focused) - FR-5.1
-                    KeyCode::Up | KeyCode::Char('k') if self.focus == Focus::Chat => {
+                    // Chat scrolling (when chat is focused)
+                    KeyCode::Up if self.focus == Focus::Chat => {
                         self.chat_scroll = self.chat_scroll.saturating_add(1);
                     }
-                    KeyCode::Down | KeyCode::Char('j') if self.focus == Focus::Chat => {
+                    KeyCode::Down if self.focus == Focus::Chat => {
                         self.chat_scroll = self.chat_scroll.saturating_sub(1);
                         if self.chat_scroll == 0 {
                             self.has_new_messages = false;
@@ -749,32 +782,12 @@ impl App {
                             self.has_new_messages = false;
                         }
                     }
-                    KeyCode::Home | KeyCode::Char('g') if self.focus == Focus::Chat => {
+                    KeyCode::Home if self.focus == Focus::Chat => {
                         self.chat_scroll = usize::MAX; // Will be clamped during render
                     }
-                    KeyCode::End | KeyCode::Char('G') if self.focus == Focus::Chat => {
+                    KeyCode::End if self.focus == Focus::Chat => {
                         self.chat_scroll = 0;
                         self.has_new_messages = false;
-                    }
-                    // Half-page scrolling with Ctrl+d/u when chat focused
-                    KeyCode::Char('d')
-                        if self.focus == Focus::Chat
-                            && key
-                                .modifiers
-                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                    {
-                        self.chat_scroll = self.chat_scroll.saturating_sub(10);
-                        if self.chat_scroll == 0 {
-                            self.has_new_messages = false;
-                        }
-                    }
-                    KeyCode::Char('u')
-                        if self.focus == Focus::Chat
-                            && key
-                                .modifiers
-                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                    {
-                        self.chat_scroll = self.chat_scroll.saturating_add(10);
                     }
 
                     // Modal handling (Esc closes modal)
@@ -807,7 +820,93 @@ impl App {
             Event::Tick => {
                 // Periodic tick for animations/updates (not used yet)
             }
+            Event::Paste(text) => {
+                self.handle_paste(text);
+            }
         }
+    }
+
+    /// Handles pasted text with multi-line detection per FR-7.3.
+    fn handle_paste(&mut self, text: String) {
+        if text.is_empty() {
+            return;
+        }
+
+        // Check if paste contains newlines
+        if text.contains('\n') {
+            // Check if this looks like multiple SQL statements
+            let has_multiple_statements = self.detect_multiple_sql_statements(&text);
+
+            if has_multiple_statements {
+                // Store pending paste for user confirmation
+                self.pending_paste = Some(PendingPaste {
+                    text: text.clone(),
+                    has_multiple_statements: true,
+                });
+                self.show_toast("Multi-statement paste detected. Press 'y' to merge, 'n' to keep as-is, Esc to cancel");
+            } else {
+                // Single SQL statement: convert newlines to spaces
+                let normalized = text.replace('\n', " ").replace("  ", " ");
+                self.input.text.push_str(&normalized);
+                self.input.cursor = self.input.text.len();
+                self.update_sql_completions();
+            }
+        } else {
+            // No newlines, just insert the text
+            self.input.text.push_str(&text);
+            self.input.cursor = self.input.text.len();
+            self.update_sql_completions();
+        }
+    }
+
+    /// Detects if pasted text contains multiple SQL statements.
+    fn detect_multiple_sql_statements(&self, text: &str) -> bool {
+        // Count semicolons that aren't inside strings (simple heuristic)
+        let mut semicolon_count = 0;
+        let mut in_string = false;
+        let mut prev_char = ' ';
+
+        for c in text.chars() {
+            match c {
+                '\'' if prev_char != '\\' => in_string = !in_string,
+                ';' if !in_string => semicolon_count += 1,
+                _ => {}
+            }
+            prev_char = c;
+        }
+
+        // Multiple statements if more than one semicolon, or one semicolon not at the end
+        semicolon_count > 1
+            || (semicolon_count == 1 && !text.trim().ends_with(';'))
+    }
+
+    /// Handles pending paste confirmation (y/n).
+    pub fn handle_paste_confirmation(&mut self, accept: bool) -> bool {
+        if let Some(pending) = self.pending_paste.take() {
+            if accept {
+                // Merge: convert newlines to spaces
+                let normalized = pending.text.replace('\n', " ").replace("  ", " ");
+                self.input.text.push_str(&normalized);
+            } else {
+                // Keep as-is: preserve newlines (user can review)
+                self.input.text.push_str(&pending.text);
+            }
+            self.input.cursor = self.input.text.len();
+            self.update_sql_completions();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns true if there's a pending paste awaiting confirmation.
+    pub fn has_pending_paste(&self) -> bool {
+        self.pending_paste.is_some()
+    }
+
+    /// Cancels any pending paste.
+    pub fn cancel_pending_paste(&mut self) {
+        self.pending_paste = None;
     }
 
     /// Handles mouse events for text selection.
@@ -816,20 +915,6 @@ impl App {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Check if click is on the "new messages" banner (FR-5.3)
-                if let Some(banner) = self.banner_area {
-                    if mouse.column >= banner.x
-                        && mouse.column < banner.x + banner.width
-                        && mouse.row >= banner.y
-                        && mouse.row < banner.y + banner.height
-                    {
-                        // Scroll to bottom and clear new messages flag
-                        self.chat_scroll = 0;
-                        self.has_new_messages = false;
-                        return;
-                    }
-                }
-
                 // Check if click is within chat area
                 if let Some(area) = self.chat_area {
                     if mouse.column >= area.x
@@ -1015,6 +1100,25 @@ impl App {
     fn handle_standard_input_key(&mut self, key: crossterm::event::KeyEvent) {
         use crossterm::event::KeyCode;
 
+        // Handle pending paste confirmation first
+        if self.has_pending_paste() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.handle_paste_confirmation(true);
+                    return;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.handle_paste_confirmation(false);
+                    return;
+                }
+                KeyCode::Esc => {
+                    self.cancel_pending_paste();
+                    return;
+                }
+                _ => return, // Ignore other keys during paste confirmation
+            }
+        }
+
         // Handle command palette if visible
         if self.handle_command_palette_key(key) {
             return;
@@ -1026,8 +1130,13 @@ impl App {
         }
 
         match key.code {
-            // Esc clears input in standard mode (also closes SQL completion)
+            // Esc: check for double-Esc cancellation first, then close overlays or clear input
             KeyCode::Esc => {
+                // Double-Esc cancellation takes priority
+                if self.handle_esc_for_cancel() {
+                    return;
+                }
+                // Single Esc: close SQL completion or clear input
                 if self.sql_completion.visible {
                     self.sql_completion.close();
                 } else {
@@ -1060,7 +1169,7 @@ impl App {
             }
             // Text input
             KeyCode::Char(c) => {
-                if c == '/' && self.input.cursor == 0 {
+                if c == '/' && self.input.is_empty() {
                     self.input.insert(c);
                     self.command_palette.open();
                 } else {
@@ -1398,6 +1507,25 @@ impl App {
     fn handle_insert_mode_key(&mut self, key: crossterm::event::KeyEvent) {
         use crossterm::event::KeyCode;
 
+        // Handle pending paste confirmation first
+        if self.has_pending_paste() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.handle_paste_confirmation(true);
+                    return;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.handle_paste_confirmation(false);
+                    return;
+                }
+                KeyCode::Esc => {
+                    self.cancel_pending_paste();
+                    return;
+                }
+                _ => return, // Ignore other keys during paste confirmation
+            }
+        }
+
         // Handle command palette if visible (uses shared handler)
         if self.handle_command_palette_key(key) {
             return;
@@ -1409,8 +1537,13 @@ impl App {
         }
 
         match key.code {
-            // Exit to Normal mode (also closes SQL completion)
+            // Esc: check for double-Esc cancellation first, then close overlays or switch mode
             KeyCode::Esc => {
+                // Double-Esc cancellation takes priority
+                if self.handle_esc_for_cancel() {
+                    return;
+                }
+                // Single Esc: close SQL completion or switch to Normal mode
                 if self.sql_completion.visible {
                     self.sql_completion.close();
                 } else {
@@ -1444,7 +1577,7 @@ impl App {
             // Text input
             KeyCode::Char(c) => {
                 // Check if this triggers command palette
-                if c == '/' && self.input.cursor == 0 {
+                if c == '/' && self.input.is_empty() {
                     self.input.insert(c);
                     self.command_palette.open();
                 } else {

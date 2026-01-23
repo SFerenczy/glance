@@ -15,6 +15,8 @@ pub enum Event {
     Mouse(MouseEvent),
     /// The terminal was resized.
     Resize(u16, u16),
+    /// Text was pasted from clipboard (bracketed paste mode).
+    Paste(String),
     /// A periodic tick (for animations/updates).
     Tick,
 }
@@ -53,6 +55,7 @@ impl EventHandler {
                 CrosstermEvent::Key(key) => Ok(Some(Event::Key(key))),
                 CrosstermEvent::Mouse(mouse) => Ok(Some(Event::Mouse(mouse))),
                 CrosstermEvent::Resize(width, height) => Ok(Some(Event::Resize(width, height))),
+                CrosstermEvent::Paste(text) => Ok(Some(Event::Paste(text))),
                 _ => Ok(Some(Event::Tick)),
             }
         } else {

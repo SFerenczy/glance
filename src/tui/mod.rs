@@ -23,7 +23,10 @@ use crate::config::ConnectionConfig;
 use crate::error::{GlanceError, Result};
 use crate::llm::LlmProvider;
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, KeyCode, KeyEventKind, KeyModifiers},
+    event::{
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        KeyCode, KeyEventKind, KeyModifiers,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -138,8 +141,13 @@ impl Tui {
             .map_err(|e| GlanceError::internal(format!("Failed to enable raw mode: {e}")))?;
 
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
-            .map_err(|e| GlanceError::internal(format!("Failed to enter alternate screen: {e}")))?;
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            EnableBracketedPaste
+        )
+        .map_err(|e| GlanceError::internal(format!("Failed to enter alternate screen: {e}")))?;
 
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)
@@ -156,7 +164,8 @@ impl Tui {
         execute!(
             self.terminal.backend_mut(),
             LeaveAlternateScreen,
-            DisableMouseCapture
+            DisableMouseCapture,
+            DisableBracketedPaste
         )
         .map_err(|e| GlanceError::internal(format!("Failed to leave alternate screen: {e}")))?;
 
@@ -174,7 +183,12 @@ impl Tui {
         panic::set_hook(Box::new(move |panic_info| {
             // Attempt to restore terminal
             let _ = disable_raw_mode();
-            let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+            let _ = execute!(
+                io::stdout(),
+                LeaveAlternateScreen,
+                DisableMouseCapture,
+                DisableBracketedPaste
+            );
             original_hook(panic_info);
         }));
 
