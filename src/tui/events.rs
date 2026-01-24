@@ -31,7 +31,7 @@ impl EventHandler {
     /// Creates a new event handler with default tick rate.
     pub fn new() -> Self {
         Self {
-            tick_rate: Duration::from_millis(100),
+            tick_rate: Duration::from_millis(16),
         }
     }
 
@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn test_event_handler_creation() {
         let handler = EventHandler::new();
-        assert_eq!(handler.tick_rate, Duration::from_millis(100));
+        assert_eq!(handler.tick_rate, Duration::from_millis(16));
     }
 
     #[test]

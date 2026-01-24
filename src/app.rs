@@ -3,6 +3,7 @@
 //! Coordinates the database client, LLM client, safety classifier,
 //! and application state to implement the main chat loop.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -278,6 +279,29 @@ impl Orchestrator {
 
         // Natural language query - send to LLM
         self.handle_natural_language(input).await
+    }
+
+    /// Handles user input with optional streaming token callbacks.
+    pub async fn handle_input_streaming<F, Fut>(
+        &mut self,
+        input: &str,
+        on_token: F,
+    ) -> Result<InputResult>
+    where
+        F: FnMut(&str) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let input = input.trim();
+
+        if input.is_empty() {
+            return Ok(InputResult::None);
+        }
+
+        if input.starts_with('/') {
+            return self.handle_command(input).await;
+        }
+
+        self.handle_natural_language_streaming(input, on_token).await
     }
 
     /// Handles a command (input starting with /).
@@ -631,6 +655,45 @@ impl Orchestrator {
         self.handle_llm_result(result).await
     }
 
+    async fn handle_natural_language_streaming<F, Fut>(
+        &mut self,
+        input: &str,
+        on_token: F,
+    ) -> Result<InputResult>
+    where
+        F: FnMut(&str) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let tool_context = ToolContext {
+            state_db: self.state_db.as_ref(),
+            current_connection: self.current_connection_name.as_deref(),
+        };
+
+        let result = if Self::input_needs_saved_query_tool(input) {
+            self.llm_service
+                .process_query(input, &self.schema, &mut self.conversation, &tool_context)
+                .await?
+        } else {
+            self.llm_service
+                .process_query_streaming(
+                    input,
+                    &self.schema,
+                    &mut self.conversation,
+                    &tool_context,
+                    on_token,
+                )
+                .await?
+        };
+
+        self.handle_llm_result(result).await
+    }
+
+    fn input_needs_saved_query_tool(input: &str) -> bool {
+        // Simple heuristic to preserve tool-call behavior for saved query requests.
+        let input = input.to_lowercase();
+        input.contains("saved quer") || input.contains("saved sql")
+    }
+
     /// Converts an LlmResult into an InputResult, executing SQL if present.
     async fn handle_llm_result(&mut self, result: LlmResult) -> Result<InputResult> {
         match result {
@@ -819,7 +882,7 @@ impl Orchestrator {
     }
 
     /// Cancels a pending query and records it in history.
-    pub async fn cancel_query(&mut self, sql: Option<&str>) -> ChatMessage {
+    pub async fn cancel_query(&mut self, sql: Option<&str>) -> (ChatMessage, Option<QueryLogEntry>) {
         // Record the cancellation in history if we have SQL and a connection
         if let (Some(sql), Some(state_db), Some(conn_name)) =
             (sql, &self.state_db, &self.current_connection_name)
@@ -837,7 +900,13 @@ impl Orchestrator {
             )
             .await;
         }
-        ChatMessage::System("Query cancelled.".to_string())
+        let log_entry = sql.map(|sql| {
+            QueryLogEntry::cancelled_with_source(sql.to_string(), QuerySource::Generated)
+        });
+        (
+            ChatMessage::System("Query cancelled.".to_string()),
+            log_entry,
+        )
     }
 
     /// Returns the current connection name.

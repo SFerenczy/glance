@@ -11,12 +11,14 @@
 //!
 //! This ensures identical behavior and logging across all execution modes.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 
 use crate::db::Schema;
 use crate::error::Result;
 use crate::persistence::{self, SavedQueryFilter, StateDb};
+use futures::StreamExt;
 
 use super::{
     build_messages_cached, format_saved_queries_for_llm, get_tool_definitions, parse_llm_response,
@@ -108,7 +110,7 @@ impl LlmService {
                 .await?;
         }
 
-        conversation.add_assistant(&response.content);
+        conversation.add_assistant(response.content.as_str());
 
         let parsed = parse_llm_response(&response.content);
         let total_duration = start.elapsed();
@@ -133,6 +135,94 @@ impl LlmService {
                 total_duration_ms = total_duration.as_millis(),
                 explanation_len = parsed.text.len(),
                 "NL→SQL processing complete: explanation only"
+            );
+            Ok(LlmResult::Explanation(parsed.text))
+        }
+    }
+
+    /// Process natural language input with streaming output support.
+    pub async fn process_query_streaming<F, Fut>(
+        &mut self,
+        input: &str,
+        schema: &Schema,
+        conversation: &mut Conversation,
+        tool_context: &ToolContext<'_>,
+        mut on_token: F,
+    ) -> Result<LlmResult>
+    where
+        F: FnMut(&str) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let start = Instant::now();
+        tracing::debug!(input_len = input.len(), "Starting streaming NL→SQL processing");
+
+        conversation.add_user(input);
+
+        let messages = build_messages_cached(&mut self.prompt_cache, schema, conversation);
+        let tools = get_tool_definitions();
+
+        tracing::debug!(
+            message_count = messages.len(),
+            tool_count = tools.len(),
+            "Sending streaming request to LLM"
+        );
+
+        let llm_start = Instant::now();
+        let mut response_content = String::new();
+        let stream_result = self.client.complete_stream(&messages).await;
+
+        match stream_result {
+            Ok(mut stream) => {
+                while let Some(chunk) = stream.next().await {
+                    let token = chunk?;
+                    response_content.push_str(&token);
+                    on_token(&token).await;
+                }
+            }
+            Err(err) => {
+                tracing::warn!("Streaming unavailable, falling back to non-streaming: {}", err);
+                let mut response = self.client.complete_with_tools(&messages, &tools).await?;
+                if response.has_tool_calls() {
+                    response = self
+                        .handle_tool_calls(response, &tools, schema, conversation, tool_context)
+                        .await?;
+                }
+                response_content = response.content;
+            }
+        }
+
+        let llm_duration = llm_start.elapsed();
+        tracing::debug!(
+            llm_duration_ms = llm_duration.as_millis(),
+            response_len = response_content.len(),
+            "Received streaming LLM response"
+        );
+
+        conversation.add_assistant(response_content.as_str());
+
+        let parsed = parse_llm_response(&response_content);
+        let total_duration = start.elapsed();
+
+        if let Some(ref sql) = parsed.sql {
+            tracing::info!(
+                total_duration_ms = total_duration.as_millis(),
+                sql_len = sql.len(),
+                has_explanation = !parsed.text.is_empty(),
+                "Streaming NL→SQL processing complete: generated SQL"
+            );
+            Ok(LlmResult::Sql {
+                sql: sql.clone(),
+                explanation: if parsed.text.is_empty() {
+                    None
+                } else {
+                    Some(parsed.text)
+                },
+            })
+        } else {
+            tracing::info!(
+                total_duration_ms = total_duration.as_millis(),
+                explanation_len = parsed.text.len(),
+                "Streaming NL→SQL processing complete: explanation only"
             );
             Ok(LlmResult::Explanation(parsed.text))
         }

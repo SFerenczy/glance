@@ -18,6 +18,8 @@ pub enum QueryStatus {
     Success,
     /// Query failed with an error.
     Error,
+    /// Query was cancelled before completion.
+    Cancelled,
 }
 
 /// How a query was initiated.
@@ -111,6 +113,19 @@ impl QueryLogEntry {
             execution_time,
             row_count: None,
             error: Some(error),
+            timestamp: Instant::now(),
+            source,
+        }
+    }
+
+    /// Creates a new cancelled query log entry with a specific source.
+    pub fn cancelled_with_source(sql: String, source: QuerySource) -> Self {
+        Self {
+            sql,
+            status: QueryStatus::Cancelled,
+            execution_time: Duration::ZERO,
+            row_count: None,
+            error: None,
             timestamp: Instant::now(),
             source,
         }
@@ -364,6 +379,8 @@ pub struct App {
     pub input_area: Option<ratatui::layout::Rect>,
     /// Pending multi-line paste awaiting user confirmation.
     pub pending_paste: Option<PendingPaste>,
+    /// Index of the assistant message currently receiving streamed tokens.
+    streaming_assistant_index: Option<usize>,
 }
 
 /// A multi-line paste that may need user confirmation.
@@ -440,6 +457,7 @@ impl App {
             schema: None,
             input_area: None,
             pending_paste: None,
+            streaming_assistant_index: None,
         }
     }
 
@@ -586,6 +604,41 @@ impl App {
     pub fn clear_messages(&mut self) {
         self.messages.clear();
         self.chat_scroll = 0;
+        self.streaming_assistant_index = None;
+    }
+
+    /// Appends a streaming token to the active assistant message.
+    pub fn append_streaming_token(&mut self, token: &str) {
+        if token.is_empty() {
+            return;
+        }
+
+        let index = match self.streaming_assistant_index {
+            Some(idx) if matches!(self.messages.get(idx), Some(ChatMessage::Assistant(_))) => idx,
+            _ => {
+                let idx = self.messages.len();
+                self.messages
+                    .push(ChatMessage::Assistant(String::new()));
+                self.streaming_assistant_index = Some(idx);
+                idx
+            }
+        };
+
+        if let Some(ChatMessage::Assistant(content)) = self.messages.get_mut(index) {
+            content.push_str(token);
+            if self.chat_scroll > 0 {
+                self.has_new_messages = true;
+            }
+        }
+    }
+
+    /// Removes any in-progress streaming assistant message.
+    pub fn clear_streaming_assistant(&mut self) {
+        if let Some(index) = self.streaming_assistant_index.take() {
+            if index < self.messages.len() {
+                self.messages.remove(index);
+            }
+        }
     }
 
     /// Adds a query to the log.
@@ -1818,6 +1871,17 @@ mod tests {
         assert_eq!(entry.status, QueryStatus::Error);
         assert!(entry.row_count.is_none());
         assert_eq!(entry.error, Some("relation does not exist".to_string()));
+    }
+
+    #[test]
+    fn test_query_log_entry_cancelled() {
+        let entry = QueryLogEntry::cancelled_with_source(
+            "SELECT * FROM users".to_string(),
+            QuerySource::Manual,
+        );
+        assert_eq!(entry.status, QueryStatus::Cancelled);
+        assert!(entry.row_count.is_none());
+        assert!(entry.error.is_none());
     }
 
     #[test]

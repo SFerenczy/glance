@@ -66,6 +66,7 @@ impl<'a> Sidebar<'a> {
         let status_icon = match entry.status {
             QueryStatus::Success => Span::styled("✓ ", Style::default().fg(Color::Green)),
             QueryStatus::Error => Span::styled("✗ ", Style::default().fg(Color::Red)),
+            QueryStatus::Cancelled => Span::styled("○ ", Style::default().fg(Color::Yellow)),
         };
 
         // Source indicator with color
@@ -95,6 +96,7 @@ impl<'a> Sidebar<'a> {
                 relative
             ),
             (QueryStatus::Error, _) => format!("{}, error · {}", time_str, relative),
+            (QueryStatus::Cancelled, _) => format!("cancelled · {}", relative),
             _ => format!("{} · {}", time_str, relative),
         };
         let info_span = Span::styled(info_text, Style::default().fg(Color::DarkGray));
@@ -186,6 +188,7 @@ impl Widget for Sidebar<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{buffer::Buffer, layout::Rect};
     use std::time::Duration;
 
     #[test]
@@ -218,5 +221,21 @@ mod tests {
             5,
         );
         assert_eq!(entry.sql_preview(30), "SELECT id, email, name, create");
+    }
+
+    #[test]
+    fn test_cancelled_entry_renders_status() {
+        let entry = QueryLogEntry::cancelled_with_source(
+            "SELECT 1".to_string(),
+            QuerySource::Manual,
+        );
+        let sidebar = Sidebar::new(&[entry], None, false);
+        let area = Rect::new(0, 0, 50, 6);
+        let mut buf = Buffer::empty(area);
+
+        sidebar.render(area, &mut buf);
+
+        let rendered: String = buf.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(rendered.contains("cancelled"));
     }
 }

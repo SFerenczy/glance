@@ -105,7 +105,7 @@ pub fn build_messages_cached(
 
     // Get cached system prompt
     let system_prompt = cache.get_or_build(schema);
-    messages.push(Message::system(system_prompt.to_string()));
+    messages.push(Message::system(system_prompt));
 
     // Add conversation history
     messages.extend(conversation.messages().iter().cloned());

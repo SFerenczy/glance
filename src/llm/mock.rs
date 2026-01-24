@@ -99,7 +99,7 @@ impl MockLlmClient {
             .iter()
             .rev()
             .find(|m| m.role == crate::llm::types::Role::User)
-            .map(|m| m.content.clone())
+            .map(|m| m.content.as_ref().to_string())
             .unwrap_or_default()
     }
 }

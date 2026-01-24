@@ -8,7 +8,7 @@
 
 use crate::app::{InputResult, Orchestrator};
 use crate::error::{GlanceError, Result};
-use crate::tui::app::{ChatMessage, QueryLogEntry};
+use crate::tui::app::{ChatMessage, QueryLogEntry, QuerySource};
 use crate::tui::ProgressMessage;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -131,7 +131,10 @@ pub enum OrchestratorResponse {
     /// Operation failed with error.
     Failed { id: RequestId, error: String },
     /// Operation was cancelled.
-    Cancelled { id: RequestId },
+    Cancelled {
+        id: RequestId,
+        log_entry: Option<QueryLogEntry>,
+    },
     /// Query needs user confirmation before execution.
     NeedsConfirmation {
         #[allow(dead_code)]
@@ -148,7 +151,10 @@ pub enum OrchestratorResponse {
     /// Queue is full, request rejected.
     QueueFull { id: RequestId },
     /// Pending query was cancelled (from CancelPendingQuery command).
-    PendingQueryCancelled { message: ChatMessage },
+    PendingQueryCancelled {
+        message: ChatMessage,
+        log_entry: Option<QueryLogEntry>,
+    },
 }
 
 /// The orchestrator actor that owns the orchestrator and processes requests.
@@ -247,9 +253,13 @@ impl OrchestratorActor {
 
         // Check if already cancelled before processing
         if request.cancel.is_cancelled() {
+            let log_entry = Self::log_entry_for_cancelled(&request);
             let _ = self
                 .response_tx
-                .send(OrchestratorResponse::Cancelled { id: request.id })
+                .send(OrchestratorResponse::Cancelled {
+                    id: request.id,
+                    log_entry,
+                })
                 .await;
             self.send_queue_update().await;
             return;
@@ -292,10 +302,23 @@ impl OrchestratorActor {
             biased;
 
             _ = cancel.cancelled() => {
-                let _ = self.response_tx.send(OrchestratorResponse::Cancelled { id }).await;
+                let _ = self.response_tx.send(OrchestratorResponse::Cancelled {
+                    id,
+                    log_entry: None,
+                }).await;
                 let _ = self.progress_tx.send(ProgressMessage::Cancelled).await;
             }
-            result = self.orchestrator.handle_input(input) => {
+            result = self.orchestrator.handle_input_streaming(input, {
+                let progress_tx = self.progress_tx.clone();
+                move |token| {
+                    let progress_tx = progress_tx.clone();
+                    async move {
+                        let _ = progress_tx
+                            .send(ProgressMessage::LlmStreaming(token.to_string()))
+                            .await;
+                    }
+                }
+            }) => {
                 let _ = self.progress_tx.send(ProgressMessage::LlmComplete(String::new())).await;
                 match result {
                     Ok(InputResult::NeedsConfirmation { sql, classification }) => {
@@ -309,6 +332,7 @@ impl OrchestratorActor {
                         let _ = self.response_tx.send(OrchestratorResponse::Completed { id, result }).await;
                     }
                     Err(e) => {
+                        let _ = self.progress_tx.send(ProgressMessage::Error(e.to_string())).await;
                         let _ = self.response_tx.send(OrchestratorResponse::Failed {
                             id,
                             error: e.to_string(),
@@ -327,7 +351,11 @@ impl OrchestratorActor {
             biased;
 
             _ = cancel.cancelled() => {
-                let _ = self.response_tx.send(OrchestratorResponse::Cancelled { id }).await;
+                let entry = QueryLogEntry::cancelled_with_source(sql.to_string(), QuerySource::Manual);
+                let _ = self.response_tx.send(OrchestratorResponse::Cancelled {
+                    id,
+                    log_entry: Some(entry),
+                }).await;
                 let _ = self.progress_tx.send(ProgressMessage::Cancelled).await;
             }
             (messages, log_entry) = self.orchestrator.execute_and_format(sql) => {
@@ -349,7 +377,11 @@ impl OrchestratorActor {
             biased;
 
             _ = cancel.cancelled() => {
-                let _ = self.response_tx.send(OrchestratorResponse::Cancelled { id }).await;
+                let entry = QueryLogEntry::cancelled_with_source(sql.to_string(), QuerySource::Generated);
+                let _ = self.response_tx.send(OrchestratorResponse::Cancelled {
+                    id,
+                    log_entry: Some(entry),
+                }).await;
                 let _ = self.progress_tx.send(ProgressMessage::Cancelled).await;
             }
             result = self.orchestrator.confirm_query(sql) => {
@@ -383,9 +415,13 @@ impl OrchestratorActor {
         if let Some(pos) = self.queue.iter().position(|r| r.id == id) {
             if let Some(request) = self.queue.remove(pos) {
                 request.cancel.cancel();
+                let log_entry = Self::log_entry_for_cancelled(&request);
                 let _ = self
                     .response_tx
-                    .send(OrchestratorResponse::Cancelled { id: request.id })
+                    .send(OrchestratorResponse::Cancelled {
+                        id: request.id,
+                        log_entry,
+                    })
                     .await;
                 self.send_queue_update().await;
             }
@@ -400,9 +436,13 @@ impl OrchestratorActor {
         // Cancel all queued
         while let Some(request) = self.queue.pop_front() {
             request.cancel.cancel();
+            let log_entry = Self::log_entry_for_cancelled(&request);
             let _ = self
                 .response_tx
-                .send(OrchestratorResponse::Cancelled { id: request.id })
+                .send(OrchestratorResponse::Cancelled {
+                    id: request.id,
+                    log_entry,
+                })
                 .await;
         }
 
@@ -471,10 +511,14 @@ impl OrchestratorActor {
                 }
 
                 OrchestratorCommand::CancelPendingQuery { sql } => {
-                    let msg = self.orchestrator.cancel_query(sql.as_deref()).await;
+                    let (msg, log_entry) =
+                        self.orchestrator.cancel_query(sql.as_deref()).await;
                     let _ = self
                         .response_tx
-                        .send(OrchestratorResponse::PendingQueryCancelled { message: msg })
+                        .send(OrchestratorResponse::PendingQueryCancelled {
+                            message: msg,
+                            log_entry,
+                        })
                         .await;
                 }
 
@@ -497,6 +541,21 @@ impl OrchestratorActor {
     #[allow(dead_code)]
     pub fn elapsed_since_queued(queued_at: Instant) -> Duration {
         queued_at.elapsed()
+    }
+
+    /// Returns a cancelled log entry for a queued SQL request, if applicable.
+    fn log_entry_for_cancelled(request: &PendingRequest) -> Option<QueryLogEntry> {
+        match request.request_type {
+            RequestType::RawSql => Some(QueryLogEntry::cancelled_with_source(
+                request.input.clone(),
+                QuerySource::Manual,
+            )),
+            RequestType::Confirmation => Some(QueryLogEntry::cancelled_with_source(
+                request.input.clone(),
+                QuerySource::Generated,
+            )),
+            RequestType::NaturalLanguage => None,
+        }
     }
 }
 
@@ -711,11 +770,63 @@ mod tests {
             .unwrap()
             .unwrap();
         match resp {
-            OrchestratorResponse::PendingQueryCancelled { message } => match message {
+            OrchestratorResponse::PendingQueryCancelled { message, .. } => match message {
                 ChatMessage::System(text) => assert!(text.contains("cancelled")),
                 _ => panic!("Expected System message"),
             },
             _ => panic!("Expected PendingQueryCancelled response"),
+        }
+
+        handle.close().await.unwrap();
+        actor_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_actor_emits_streaming_tokens() {
+        let (handle, actor, mut progress_rx, mut response_rx) = create_test_actor();
+        let actor_handle = tokio::spawn(actor.run());
+
+        let id = RequestId::new();
+        handle
+            .process_input(id, "Show me all users".to_string(), CancellationToken::new())
+            .await
+            .unwrap();
+
+        let mut saw_stream = false;
+        let mut saw_complete = false;
+        for _ in 0..20 {
+            if let Ok(Some(progress)) =
+                timeout(std::time::Duration::from_secs(1), progress_rx.recv()).await
+            {
+                match progress {
+                    ProgressMessage::LlmStreaming(token) => {
+                        if !token.is_empty() {
+                            saw_stream = true;
+                        }
+                    }
+                    ProgressMessage::LlmComplete(_) => {
+                        saw_complete = true;
+                        if saw_stream {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        assert!(saw_stream, "Expected streaming tokens");
+        assert!(saw_complete, "Expected LlmComplete signal");
+
+        // Drain until we see completion for this request.
+        for _ in 0..20 {
+            if let Ok(Some(resp)) =
+                timeout(std::time::Duration::from_secs(1), response_rx.recv()).await
+            {
+                if matches!(resp, OrchestratorResponse::Completed { id: resp_id, .. } if resp_id == id) {
+                    break;
+                }
+            }
         }
 
         handle.close().await.unwrap();
@@ -870,7 +981,7 @@ mod tests {
             if let Ok(Some(resp)) =
                 timeout(std::time::Duration::from_millis(100), response_rx.recv()).await
             {
-                if matches!(resp, OrchestratorResponse::Cancelled { id } if id == id2) {
+                if matches!(resp, OrchestratorResponse::Cancelled { id, .. } if id == id2) {
                     found_cancelled = true;
                     break;
                 }

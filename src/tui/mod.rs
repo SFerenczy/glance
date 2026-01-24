@@ -331,7 +331,7 @@ impl Tui {
             tokio::select! {
                 // Handle terminal events
                 event_result = tokio::task::spawn_blocking({
-                    let tick_rate = std::time::Duration::from_millis(100);
+                    let tick_rate = std::time::Duration::from_millis(16);
                     move || {
                         if crossterm::event::poll(tick_rate).unwrap_or(false) {
                             crossterm::event::read().ok()
@@ -375,7 +375,7 @@ impl Tui {
 
         match event {
             CEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                // Handle cancellation during processing
+                // Handle cancellation during processing, allow other keys through
                 if app_state.is_processing {
                     match key.code {
                         KeyCode::Esc => {
@@ -389,7 +389,7 @@ impl Tui {
                             self.cancel_all_pending();
                             return;
                         }
-                        _ => return, // Ignore other keys while processing
+                        _ => {}
                     }
                 }
 
@@ -522,6 +522,7 @@ impl Tui {
                 // Remove from pending cancellations
                 self.pending_cancellations.remove(&id);
                 app_state.is_processing = self.has_pending_requests();
+                app_state.clear_streaming_assistant();
 
                 match result {
                     InputResult::Messages(messages, log_entry) => {
@@ -584,6 +585,7 @@ impl Tui {
                 self.pending_cancellations.remove(&id);
                 app_state.is_processing = self.has_pending_requests();
                 app_state.spinner = None;
+                app_state.clear_streaming_assistant();
 
                 for m in messages {
                     app_state.add_message(m);
@@ -597,16 +599,21 @@ impl Tui {
                 self.pending_cancellations.remove(&id);
                 app_state.is_processing = self.has_pending_requests();
                 app_state.spinner = None;
+                app_state.clear_streaming_assistant();
 
                 app_state.add_message(app::ChatMessage::Error(error));
             }
-            OrchestratorResponse::Cancelled { id } => {
+            OrchestratorResponse::Cancelled { id, log_entry } => {
                 // Remove from pending cancellations
                 self.pending_cancellations.remove(&id);
                 app_state.is_processing = self.has_pending_requests();
                 app_state.spinner = None;
+                app_state.clear_streaming_assistant();
 
                 app_state.add_message(app::ChatMessage::System("Operation cancelled.".to_string()));
+                if let Some(entry) = log_entry {
+                    app_state.add_query_log(entry);
+                }
             }
             OrchestratorResponse::NeedsConfirmation {
                 id,
@@ -618,6 +625,7 @@ impl Tui {
                 self.pending_cancellations.remove(&id);
                 app_state.is_processing = self.has_pending_requests();
                 app_state.spinner = None;
+                app_state.clear_streaming_assistant();
                 // Show confirmation dialog
                 app_state.set_pending_query(sql, classification);
             }
@@ -635,8 +643,11 @@ impl Tui {
                     "Queue is full. Please wait for pending requests to complete.".to_string(),
                 ));
             }
-            OrchestratorResponse::PendingQueryCancelled { message } => {
+            OrchestratorResponse::PendingQueryCancelled { message, log_entry } => {
                 app_state.add_message(message);
+                if let Some(entry) = log_entry {
+                    app_state.add_query_log(entry);
+                }
             }
         }
     }
@@ -653,8 +664,8 @@ impl Tui {
             ProgressMessage::LlmStarted => {
                 app_state.spinner = Some(Spinner::thinking());
             }
-            ProgressMessage::LlmStreaming(_token) => {
-                // Future: could display streaming tokens
+            ProgressMessage::LlmStreaming(token) => {
+                app_state.append_streaming_token(&token);
                 if app_state.spinner.is_none() {
                     app_state.spinner = Some(Spinner::thinking());
                 }
@@ -671,12 +682,13 @@ impl Tui {
             ProgressMessage::Error(msg) => {
                 app_state.is_processing = false;
                 app_state.spinner = None;
-                app_state.add_message(app::ChatMessage::Error(msg));
+                app_state.clear_streaming_assistant();
+                tracing::warn!("Background operation failed: {}", msg);
             }
             ProgressMessage::Cancelled => {
                 app_state.is_processing = false;
                 app_state.spinner = None;
-                app_state.add_message(app::ChatMessage::System("Operation cancelled.".to_string()));
+                app_state.clear_streaming_assistant();
             }
         }
     }

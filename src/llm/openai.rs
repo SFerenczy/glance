@@ -92,7 +92,7 @@ impl OpenAiClient {
             .iter()
             .map(|m| OpenAiMessage {
                 role: m.role.as_str().to_string(),
-                content: Some(m.content.clone()),
+                content: Some(m.content.as_ref().to_string()),
                 tool_calls: None,
                 tool_call_id: None,
             })

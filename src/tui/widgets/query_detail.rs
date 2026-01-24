@@ -56,11 +56,13 @@ impl Widget for QueryDetailModal<'_> {
         let status_style = match self.entry.status {
             QueryStatus::Success => Style::default().fg(Color::Green),
             QueryStatus::Error => Style::default().fg(Color::Red),
+            QueryStatus::Cancelled => Style::default().fg(Color::Yellow),
         };
 
         let status_text = match self.entry.status {
             QueryStatus::Success => "✓ Success",
             QueryStatus::Error => "✗ Error",
+            QueryStatus::Cancelled => "○ Cancelled",
         };
 
         let title = " Query Details [Esc to close] ";
@@ -92,15 +94,18 @@ impl Widget for QueryDetailModal<'_> {
         let chunks = Layout::default().constraints(constraints).split(inner);
 
         // Status line with execution info
-        let info_line = match self.entry.row_count {
-            Some(rows) => format!(
-                "{} | {} | {} row{}",
-                status_text,
-                self.format_time(),
-                rows,
-                if rows == 1 { "" } else { "s" }
-            ),
-            None => format!("{} | {}", status_text, self.format_time()),
+        let info_line = match self.entry.status {
+            QueryStatus::Cancelled => format!("{} | {}", status_text, self.entry.relative_time()),
+            _ => match self.entry.row_count {
+                Some(rows) => format!(
+                    "{} | {} | {} row{}",
+                    status_text,
+                    self.format_time(),
+                    rows,
+                    if rows == 1 { "" } else { "s" }
+                ),
+                None => format!("{} | {}", status_text, self.format_time()),
+            },
         };
 
         let status_paragraph =
@@ -144,6 +149,7 @@ impl Widget for QueryDetailModal<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{buffer::Buffer, layout::Rect};
     use std::time::Duration;
 
     #[test]
@@ -170,5 +176,19 @@ mod tests {
         let entry = QueryLogEntry::success("SELECT 1".to_string(), Duration::from_millis(2500), 1);
         let modal = QueryDetailModal::new(&entry);
         assert_eq!(modal.format_time(), "2.50s");
+    }
+
+    #[test]
+    fn test_cancelled_status_renders() {
+        let entry =
+            QueryLogEntry::cancelled_with_source("SELECT 1".to_string(), crate::tui::app::QuerySource::Manual);
+        let modal = QueryDetailModal::new(&entry);
+        let area = Rect::new(0, 0, 80, 20);
+        let mut buf = Buffer::empty(area);
+
+        modal.render(area, &mut buf);
+
+        let rendered: String = buf.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(rendered.contains("Cancelled"));
     }
 }

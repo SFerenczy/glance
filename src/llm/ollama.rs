@@ -102,7 +102,7 @@ impl OllamaClient {
             .iter()
             .map(|m| OllamaMessage {
                 role: m.role.as_str().to_string(),
-                content: m.content.clone(),
+                content: m.content.as_ref().to_string(),
             })
             .collect()
     }

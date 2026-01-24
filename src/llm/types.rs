@@ -3,6 +3,7 @@
 //! Defines the core types used for building conversations with LLM providers.
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// A tool call requested by the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,12 +86,12 @@ pub struct Message {
     /// The role of the message sender.
     pub role: Role,
     /// The content of the message.
-    pub content: String,
+    pub content: Arc<str>,
 }
 
 impl Message {
     /// Creates a new message with the given role and content.
-    pub fn new(role: Role, content: impl Into<String>) -> Self {
+    pub fn new(role: Role, content: impl Into<Arc<str>>) -> Self {
         Self {
             role,
             content: content.into(),
@@ -98,17 +99,17 @@ impl Message {
     }
 
     /// Creates a system message.
-    pub fn system(content: impl Into<String>) -> Self {
+    pub fn system(content: impl Into<Arc<str>>) -> Self {
         Self::new(Role::System, content)
     }
 
     /// Creates a user message.
-    pub fn user(content: impl Into<String>) -> Self {
+    pub fn user(content: impl Into<Arc<str>>) -> Self {
         Self::new(Role::User, content)
     }
 
     /// Creates an assistant message.
-    pub fn assistant(content: impl Into<String>) -> Self {
+    pub fn assistant(content: impl Into<Arc<str>>) -> Self {
         Self::new(Role::Assistant, content)
     }
 }
@@ -147,12 +148,12 @@ impl Conversation {
     }
 
     /// Adds a user message to the conversation.
-    pub fn add_user(&mut self, content: impl Into<String>) {
+    pub fn add_user(&mut self, content: impl Into<Arc<str>>) {
         self.add(Message::user(content));
     }
 
     /// Adds an assistant message to the conversation.
-    pub fn add_assistant(&mut self, content: impl Into<String>) {
+    pub fn add_assistant(&mut self, content: impl Into<Arc<str>>) {
         self.add(Message::assistant(content));
     }
 
@@ -242,15 +243,15 @@ mod tests {
     fn test_message_constructors() {
         let system = Message::system("You are a helpful assistant.");
         assert_eq!(system.role, Role::System);
-        assert_eq!(system.content, "You are a helpful assistant.");
+        assert_eq!(system.content.as_ref(), "You are a helpful assistant.");
 
         let user = Message::user("Hello!");
         assert_eq!(user.role, Role::User);
-        assert_eq!(user.content, "Hello!");
+        assert_eq!(user.content.as_ref(), "Hello!");
 
         let assistant = Message::assistant("Hi there!");
         assert_eq!(assistant.role, Role::Assistant);
-        assert_eq!(assistant.content, "Hi there!");
+        assert_eq!(assistant.content.as_ref(), "Hi there!");
     }
 
     #[test]

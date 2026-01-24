@@ -110,18 +110,18 @@ impl AnthropicClient {
             match msg.role {
                 Role::System => {
                     // Anthropic uses a separate system parameter
-                    system = Some(msg.content.clone());
+                    system = Some(msg.content.as_ref().to_string());
                 }
                 Role::User => {
                     converted.push(AnthropicMessage {
                         role: "user".to_string(),
-                        content: msg.content.clone(),
+                        content: msg.content.as_ref().to_string(),
                     });
                 }
                 Role::Assistant => {
                     converted.push(AnthropicMessage {
                         role: "assistant".to_string(),
-                        content: msg.content.clone(),
+                        content: msg.content.as_ref().to_string(),
                     });
                 }
             }

@@ -49,7 +49,7 @@ impl<'a> ResultTable<'a> {
             .result
             .columns
             .iter()
-            .map(|col| col.name.len().max(MIN_COLUMN_WIDTH))
+            .map(|col| Self::header_text(col).len().max(MIN_COLUMN_WIDTH))
             .collect();
 
         for row in &self.result.rows {
@@ -63,6 +63,11 @@ impl<'a> ResultTable<'a> {
 
         // Cap at max width
         widths.iter().map(|&w| w.min(MAX_COLUMN_WIDTH)).collect()
+    }
+
+    /// Builds the header label for a column (name + type).
+    fn header_text(col: &crate::db::ColumnInfo) -> String {
+        format!("{}:{}", col.name, col.data_type)
     }
 
     /// Truncates a string to fit within the given width, adding ellipsis if needed.
@@ -191,7 +196,7 @@ impl<'a> ResultTable<'a> {
 
         for (i, col) in self.result.columns.iter().enumerate() {
             let width = widths.get(i).copied().unwrap_or(MIN_COLUMN_WIDTH);
-            let name = Self::truncate(&col.name, width);
+            let name = Self::truncate(&Self::header_text(col), width);
             let padded = format!(" {:width$} ", name, width = width);
 
             spans.push(Span::styled(
@@ -291,12 +296,12 @@ mod tests {
         let table = ResultTable::new(&result);
         let widths = table.calculate_column_widths();
 
-        // id column: max of "id" (2) and "1" (1) -> MIN_COLUMN_WIDTH (4)
-        // name column: max of "name" (4) and "Alice" (5) -> 5
-        // email column: max of "email" (5) and "alice@test.com" (14) -> 14
+        // id column: max of "id:integer" (10) and "1" (1) -> 10
+        // name column: max of "name:varchar" (12) and "Alice" (5) -> 12
+        // email column: max of "email:varchar" (13) and "alice@test.com" (14) -> 14
         assert_eq!(widths.len(), 3);
-        assert_eq!(widths[0], 4); // MIN_COLUMN_WIDTH
-        assert_eq!(widths[1], 5);
+        assert_eq!(widths[0], 10);
+        assert_eq!(widths[1], 12);
         assert_eq!(widths[2], 14);
     }
 
@@ -316,6 +321,24 @@ mod tests {
 
         // Should have: top border, header, separator, 2 data rows, bottom border, footer
         assert_eq!(lines.len(), 7);
+    }
+
+    #[test]
+    fn test_header_includes_types() {
+        let result = sample_result();
+        let table = ResultTable::new(&result);
+        let lines = table.render_to_lines(80);
+
+        let header_line = lines.get(1).expect("header row");
+        let header_text: String = header_line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+
+        assert!(header_text.contains("id:integer"));
+        assert!(header_text.contains("name:varchar"));
+        assert!(header_text.contains("email:varchar"));
     }
 
     #[test]
