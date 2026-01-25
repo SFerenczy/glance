@@ -1328,13 +1328,103 @@ mod tests {
     #[tokio::test]
     async fn test_cancel_query() {
         let mut orchestrator = Orchestrator::with_mock_llm(None, Schema::default());
-        let msg = orchestrator.cancel_query(None).await;
+        let (msg, _log_entry) = orchestrator.cancel_query(None).await;
 
         match msg {
             ChatMessage::System(text) => {
                 assert!(text.contains("cancelled"));
             }
             _ => panic!("Expected System message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_auto_execution_query_log_success() {
+        // Test that auto-executed safe queries create log entries with source=Auto and status=Success
+        use crate::db::MockDatabaseClient;
+        use crate::llm::MockLlmClient;
+
+        let schema = sample_schema();
+        let db = Box::new(MockDatabaseClient::with_schema(schema.clone()));
+        let llm = Box::new(MockLlmClient::new());
+        let mut orchestrator = Orchestrator::new(Some(db), llm, schema);
+
+        // Natural language query that should auto-execute
+        let result = orchestrator.handle_input("show me all users").await.unwrap();
+
+        match result {
+            InputResult::Messages(messages, Some(log_entry)) => {
+                // Verify messages are returned
+                assert!(!messages.is_empty());
+
+                // Verify log entry has Auto source and Success status
+                assert_eq!(log_entry.source, crate::tui::app::QuerySource::Auto);
+                assert_eq!(log_entry.status, crate::tui::app::QueryStatus::Success);
+                assert!(log_entry.error.is_none());
+                // row_count can be any non-negative value
+                assert!(log_entry.row_count.is_some());
+            }
+            _ => panic!("Expected Messages result with log entry, got: {:?}", result),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_auto_execution_query_log_error() {
+        // Test that auto-executed queries that fail create log entries with source=Auto and status=Error
+        use crate::db::FailingDatabaseClient;
+        use crate::llm::MockLlmClient;
+
+        let schema = sample_schema();
+        let db = Box::new(FailingDatabaseClient::with_schema(schema.clone()));
+        let llm = Box::new(MockLlmClient::new());
+        let mut orchestrator = Orchestrator::new(Some(db), llm, schema);
+
+        // Natural language query that should auto-execute but fail
+        let result = orchestrator.handle_input("show me all users").await.unwrap();
+
+        match result {
+            InputResult::Messages(messages, Some(log_entry)) => {
+                // Verify error message is returned
+                assert!(!messages.is_empty());
+                // At least one message should be an error
+                assert!(messages.iter().any(|m| matches!(m, ChatMessage::Error(_))));
+
+                // Verify log entry has Auto source and Error status
+                assert_eq!(log_entry.source, crate::tui::app::QuerySource::Auto);
+                assert_eq!(log_entry.status, crate::tui::app::QueryStatus::Error);
+                assert!(log_entry.error.is_some(), "Error field should be populated");
+                assert!(log_entry.error.as_ref().unwrap().contains("Mock database error"));
+            }
+            _ => panic!("Expected Messages result with log entry, got: {:?}", result),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_manual_sql_failure_query_log() {
+        // Test that /sql errors produce QueryLogEntry with source=Manual and status=Error
+        use crate::db::FailingDatabaseClient;
+        use crate::llm::MockLlmClient;
+
+        let schema = sample_schema();
+        let db = Box::new(FailingDatabaseClient::with_schema(schema.clone()));
+        let llm = Box::new(MockLlmClient::new());
+        let mut orchestrator = Orchestrator::new(Some(db), llm, schema);
+
+        // Manual SQL query that should fail
+        let result = orchestrator.handle_input("/sql SELECT * FROM users").await.unwrap();
+
+        match result {
+            InputResult::Messages(messages, Some(log_entry)) => {
+                // Verify error message is returned
+                assert!(!messages.is_empty());
+                assert!(messages.iter().any(|m| matches!(m, ChatMessage::Error(_))));
+
+                // Verify log entry has Manual source and Error status
+                assert_eq!(log_entry.source, crate::tui::app::QuerySource::Manual);
+                assert_eq!(log_entry.status, crate::tui::app::QueryStatus::Error);
+                assert!(log_entry.error.is_some(), "Error field should be populated");
+            }
+            _ => panic!("Expected Messages result with log entry, got: {:?}", result),
         }
     }
 }

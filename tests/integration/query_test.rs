@@ -230,6 +230,43 @@ async fn test_execute_empty_result() {
 }
 
 #[tokio::test]
+async fn test_empty_result_preserves_column_metadata() {
+    let Some(client) = get_test_client().await else {
+        eprintln!("Skipping test: DATABASE_URL not set");
+        return;
+    };
+
+    // Query with specific columns but no matching rows
+    let result = client
+        .execute_query("SELECT id, email FROM users WHERE 1 = 0")
+        .await
+        .unwrap();
+
+    // Verify result is empty
+    assert_eq!(result.rows.len(), 0);
+    assert_eq!(result.row_count, 0);
+    assert!(result.is_empty());
+
+    // Verify column metadata is preserved
+    assert_eq!(result.columns.len(), 2);
+
+    // Check column names
+    assert_eq!(result.columns[0].name, "id");
+    assert_eq!(result.columns[1].name, "email");
+
+    // Check column types are present (non-empty)
+    assert!(!result.columns[0].data_type.is_empty(),
+            "Column 'id' should have a data type");
+    assert!(!result.columns[1].data_type.is_empty(),
+            "Column 'email' should have a data type");
+
+    // Verify execution time is recorded
+    assert!(!result.execution_time.is_zero());
+
+    client.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn test_execution_time_recorded() {
     let Some(client) = get_test_client().await else {
         eprintln!("Skipping test: DATABASE_URL not set");
