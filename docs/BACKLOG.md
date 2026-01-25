@@ -26,6 +26,26 @@ Add lightweight performance tracking for non-functional requirements:
 
 ## Conversational AI Improvements
 
+### Agentic AI Database Interaction
+
+**Status**: Exploratory idea
+**Effort**: High
+**Value**: High (core feature enhancement)
+
+Build autonomous AI agent capabilities for database interaction:
+
+- **Multi-step reasoning** - AI plans and executes sequences of queries
+- **Self-correction** - Detect errors and retry with adjusted approach
+- **Context accumulation** - Build understanding across multiple interactions
+- **Goal-oriented exploration** - AI explores schema to answer complex questions
+
+**Open Questions**:
+- How much autonomy should the agent have for mutations?
+- How to handle long-running exploration sessions?
+- What guardrails prevent runaway query sequences?
+
+---
+
 ### Free-Text AI Responses (v0.3 idea)
 
 **Status**: Exploratory idea
@@ -44,6 +64,26 @@ Rework AI chat to be more conversational:
 - How to balance conversational responses with quick data access?
 - Should query results be inline or in a separate view?
 - How to handle multi-step query refinement?
+
+---
+
+## Developer Experience
+
+### Docker Worktree Support
+
+**Status**: Idea
+**Effort**: Low-Medium
+**Value**: Medium (developer experience)
+
+Make Docker development setup more robust for git worktree workflows:
+
+- **Shared volume configuration** - Handle multiple worktree checkouts gracefully
+- **Path-independent setup** - Don't assume fixed repo paths
+- **Worktree detection** - Auto-detect and configure for worktree environments
+
+**Use Cases**:
+- Developers using git worktrees for parallel feature development
+- CI environments with dynamic checkout paths
 
 ---
 
@@ -84,6 +124,32 @@ Enhance headless mode for AI-assisted debugging:
 **Status Note**: Basic headless mode exists (`--headless --mock-db`). Needs enhancement for full AI agent interaction.
 
 See `docs/specs/v0.2e.md` for detailed specification.
+
+---
+
+## UX Improvements
+
+### Interactive Command Input (Form Mode)
+
+**Status**: Idea
+**Effort**: Medium
+**Value**: Medium-High (UX improvement)
+
+Improve UX for commands with multiple parameters like `/conn add`:
+
+- **Multi-field forms** - Tab through input fields (host, port, user, password, database)
+- **Field validation** - Real-time feedback on input validity
+- **Default values** - Pre-populate common defaults (port 5432 for Postgres)
+- **Inline help** - Show hints for each field
+
+**Implementation Options**:
+1. **Modal form overlay** - Popup form with labeled fields
+2. **Inline expansion** - Command expands into editable fields below input
+3. **Wizard flow** - Step through fields one at a time with prompts
+
+**Open Questions**:
+- Which approach best fits the existing TUI patterns?
+- Should forms support keyboard shortcuts for common values?
 
 ---
 
