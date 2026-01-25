@@ -101,11 +101,19 @@
 26. ⏸️ Secret storage warning badge - Requires TUI layer changes
     - Note: StateDb.secret_storage_status() available for TUI
 
-### Phase 5 - LLM Improvements
-- ⏸️ Add masked input prompt for /llm key
-- ⏸️ Implement multi-tag filtering for LLM tools
-- ⏸️ Add redacted connection context to LLM prompt
-- ⏸️ Verify LLM improvements
+### Phase 5 - LLM Improvements (COMPLETE - Backend)
+27. ✅ Implement multi-tag filtering for LLM tools
+    - SavedQueryFilter.tags field: `src/persistence/saved_queries.rs:53`
+    - AND semantics implementation: `src/persistence/saved_queries.rs:233-242`
+    - LlmService updated: `src/llm/service.rs:319-326`
+    - Test coverage: `src/persistence/saved_queries.rs:512-544`
+28. ✅ Add redacted connection context to LLM prompt
+    - ConnectionContext infrastructure: `src/llm/prompt.rs:20-43`
+    - build_connection_context method: `src/llm/service.rs:345-365`
+    - Integrated into all LLM calls: `src/llm/service.rs:85-90,166-171,261-265`
+    - Only label and database name included (no host/user/password)
+29. ⏸️ Masked input prompt for /llm key - Requires TUI layer changes
+    - Note: Backend ready to receive masked input
 
 ### Phase 7 - Testing & Verification
 - ⏸️ Verify connection switch cancellation behavior
@@ -119,8 +127,8 @@
 ## 📊 Progress Summary
 
 **Total Tasks:** 36
-**Completed:** 24 (67%)
-**Remaining:** 12 (33%)
+**Completed:** 27 (75%)
+**Remaining:** 9 (25%)
 
 **Phase Completion:**
 - Phase 0 (Prep): 4/4 (100%) ✅
@@ -128,7 +136,7 @@
 - Phase 2 (Connection CRUD): 3/3 (100%) ✅
 - Phase 3 (History UX): 3/5 (60%) 🟡
 - Phase 4 (Saved Queries): 8/8 (100%) ✅
-- Phase 5 (LLM): 0/4 (0%) ⏸️
+- Phase 5 (LLM): 3/4 (75%) 🟡 (Backend complete, TUI integration pending)
 - Phase 6 (Persistence): 3/4 (75%) 🟡 (Core complete, TUI integration pending)
 - Phase 7 (Testing): 0/5 (0%) ⏸️
 

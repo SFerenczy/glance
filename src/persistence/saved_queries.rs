@@ -50,7 +50,8 @@ pub struct SavedQueryTag {
 pub struct SavedQueryFilter {
     pub connection_name: Option<String>,
     pub include_global: bool,
-    pub tag: Option<String>,
+    /// Multiple tags to filter by (AND semantics - query must have all tags).
+    pub tags: Option<Vec<String>>,
     pub text_search: Option<String>,
     pub limit: Option<i64>,
 }
@@ -229,10 +230,18 @@ pub async fn list_saved_queries(
         bindings.push(conn.clone());
     }
 
-    if let Some(ref tag) = filter.tag {
-        conditions
-            .push("id IN (SELECT saved_query_id FROM saved_query_tags WHERE tag = ?)".to_string());
-        bindings.push(tag.clone());
+    // Multi-tag filtering with AND semantics: query must have all specified tags
+    if let Some(ref tags) = filter.tags {
+        if !tags.is_empty() {
+            // For each tag, add a condition that the query has that tag
+            for tag in tags {
+                conditions.push(
+                    "id IN (SELECT saved_query_id FROM saved_query_tags WHERE tag = ?)"
+                        .to_string(),
+                );
+                bindings.push(tag.clone());
+            }
+        }
     }
 
     if let Some(ref text) = filter.text_search {
@@ -491,7 +500,46 @@ mod tests {
         .unwrap();
 
         let filter = SavedQueryFilter {
-            tag: Some("tag1".to_string()),
+            tags: Some(vec!["tag1".to_string()]),
+            ..Default::default()
+        };
+
+        let queries = list_saved_queries(&pool, &filter).await.unwrap();
+        assert_eq!(queries.len(), 1);
+        assert_eq!(queries[0].name, "q1");
+    }
+
+    #[tokio::test]
+    async fn test_list_with_multiple_tags_filter() {
+        let pool = test_pool().await;
+
+        // Query with both tag1 and tag2
+        create_saved_query(
+            &pool,
+            "q1",
+            "SELECT 1",
+            None,
+            Some("test"),
+            &["tag1".to_string(), "tag2".to_string()],
+        )
+        .await
+        .unwrap();
+
+        // Query with only tag1
+        create_saved_query(
+            &pool,
+            "q2",
+            "SELECT 2",
+            None,
+            Some("test"),
+            &["tag1".to_string()],
+        )
+        .await
+        .unwrap();
+
+        // Filter by both tags (AND semantics) - should only return q1
+        let filter = SavedQueryFilter {
+            tags: Some(vec!["tag1".to_string(), "tag2".to_string()]),
             ..Default::default()
         };
 

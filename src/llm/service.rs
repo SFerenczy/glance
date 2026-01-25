@@ -22,7 +22,8 @@ use futures::StreamExt;
 
 use super::{
     build_messages_cached, format_saved_queries_for_llm, get_tool_definitions, parse_llm_response,
-    Conversation, ListSavedQueriesInput, LlmClient, LlmResponse, PromptCache, ToolResult,
+    prompt::ConnectionContext, Conversation, ListSavedQueriesInput, LlmClient, LlmResponse,
+    PromptCache, ToolResult,
 };
 
 /// LLM service that handles natural language processing and tool calls.
@@ -82,7 +83,11 @@ impl LlmService {
 
         conversation.add_user(input);
 
-        let messages = build_messages_cached(&mut self.prompt_cache, schema, conversation);
+        // Build redacted connection context for LLM prompt
+        let connection_ctx = self.build_connection_context(tool_context).await;
+
+        let messages =
+            build_messages_cached(&mut self.prompt_cache, schema, conversation, &connection_ctx);
         let tools = get_tool_definitions();
 
         tracing::debug!(
@@ -158,7 +163,11 @@ impl LlmService {
 
         conversation.add_user(input);
 
-        let messages = build_messages_cached(&mut self.prompt_cache, schema, conversation);
+        // Build redacted connection context for LLM prompt
+        let connection_ctx = self.build_connection_context(tool_context).await;
+
+        let messages =
+            build_messages_cached(&mut self.prompt_cache, schema, conversation, &connection_ctx);
         let tools = get_tool_definitions();
 
         tracing::debug!(
@@ -249,7 +258,11 @@ impl LlmService {
             });
         }
 
-        let messages = build_messages_cached(&mut self.prompt_cache, schema, conversation);
+        // Build redacted connection context for LLM prompt
+        let connection_ctx = self.build_connection_context(tool_context).await;
+
+        let messages =
+            build_messages_cached(&mut self.prompt_cache, schema, conversation, &connection_ctx);
 
         self.client
             .continue_with_tool_results(&messages, &response.tool_calls, &tool_results, tools)
@@ -321,7 +334,7 @@ impl LlmService {
                 .connection_name
                 .or_else(|| tool_context.current_connection.map(|s| s.to_string())),
             include_global: true,
-            tag: input.tags.and_then(|t| t.into_iter().next()),
+            tags: input.tags,
             text_search: input.text,
             limit: input.limit,
         };
@@ -336,6 +349,29 @@ impl LlmService {
             })
             .to_string(),
         }
+    }
+
+    /// Builds a redacted connection context for the LLM prompt.
+    ///
+    /// Retrieves the database name from the connection profile if available,
+    /// using only the connection name (label) and database name (never host, user, or password).
+    async fn build_connection_context(&self, tool_context: &ToolContext<'_>) -> ConnectionContext {
+        let label = tool_context.current_connection.map(|s| s.to_string());
+
+        // Attempt to retrieve database name from connection profile
+        let database = if let (Some(state_db), Some(conn_name)) =
+            (tool_context.state_db, tool_context.current_connection)
+        {
+            persistence::connections::get_connection(state_db.pool(), conn_name)
+                .await
+                .ok()
+                .flatten()
+                .map(|profile| profile.database)
+        } else {
+            None
+        };
+
+        ConnectionContext::new(label, database)
     }
 
     /// Returns a reference to the underlying LLM client.

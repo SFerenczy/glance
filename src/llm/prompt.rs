@@ -100,11 +100,12 @@ pub fn build_messages_cached(
     cache: &mut PromptCache,
     schema: &Schema,
     conversation: &Conversation,
+    connection: &ConnectionContext,
 ) -> Vec<Message> {
     let mut messages = Vec::with_capacity(conversation.len() + 1);
 
-    // Get cached system prompt
-    let system_prompt = cache.get_or_build(schema);
+    // Get cached system prompt with connection context
+    let system_prompt = cache.get_or_build_with_context(schema, connection);
     messages.push(Message::system(system_prompt));
 
     // Add conversation history

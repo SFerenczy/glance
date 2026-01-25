@@ -112,7 +112,7 @@ pub async fn handle_queries_list(
                 .or_else(|| ctx.current_connection.map(|s| s.to_string()))
         },
         include_global: true,
-        tag: args.tag.clone(),
+        tags: args.tag.clone().map(|t| vec![t]),
         text_search: args.text.clone(),
         limit: None,
     };
