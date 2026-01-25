@@ -9,16 +9,19 @@
 use crate::app::{InputResult, Orchestrator};
 use crate::error::{GlanceError, Result};
 use crate::tui::app::{ChatMessage, QueryLogEntry, QuerySource};
+use crate::tui::request_queue::{
+    PendingRequest, QueueEvent, RequestQueue, DEFAULT_MAX_QUEUE_DEPTH,
+};
+
+/// Maximum number of requests that can be queued.
+/// Re-exported from request_queue for backward compatibility.
+pub const MAX_QUEUE_DEPTH: usize = DEFAULT_MAX_QUEUE_DEPTH;
 use crate::tui::ProgressMessage;
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
-
-/// Maximum number of requests that can be queued.
-pub const MAX_QUEUE_DEPTH: usize = 10;
 
 /// Unique identifier for a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -75,28 +78,30 @@ pub enum OperationPhase {
     Processing,
 }
 
-/// An in-flight request being processed.
-struct InFlightRequest {
-    id: RequestId,
-    task: tokio::task::JoinHandle<std::result::Result<InputResult, String>>,
-    started_at: Instant,
-    phase: OperationPhase,
-}
-
-/// A request waiting in the queue.
+/// Internal action representation for command handling.
+///
+/// This enum represents the action to take after classifying an incoming command.
+/// It separates the pure command classification from the async execution.
 #[derive(Debug)]
-#[allow(dead_code)]
-pub struct PendingRequest {
-    /// Unique identifier for this request.
-    pub id: RequestId,
-    /// The input string (natural language, SQL, or confirmation).
-    pub input: String,
-    /// Type of request.
-    pub request_type: RequestType,
-    /// When this request was queued.
-    pub queued_at: Instant,
-    /// Cancellation token for this request.
-    pub cancel: CancellationToken,
+pub enum CommandAction {
+    /// Enqueue a request for processing.
+    Enqueue(PendingRequest),
+    /// Confirm a query that was awaiting user approval.
+    Confirm {
+        id: RequestId,
+        sql: String,
+        cancel: CancellationToken,
+    },
+    /// Cancel the current in-flight request.
+    CancelCurrent,
+    /// Cancel a specific queued request by ID.
+    CancelById(RequestId),
+    /// Cancel all operations (current + queued).
+    CancelAll,
+    /// Cancel a pending query confirmation dialog.
+    CancelPendingQuery { sql: Option<String> },
+    /// Shut down the actor gracefully.
+    Shutdown,
 }
 
 /// Commands sent from TUI to orchestrator actor.
@@ -209,16 +214,10 @@ pub struct OrchestratorActor {
     progress_tx: mpsc::Sender<ProgressMessage>,
     /// Channel for sending responses to TUI.
     response_tx: mpsc::Sender<OrchestratorResponse>,
-    /// Pending request queue (FIFO).
-    queue: VecDeque<PendingRequest>,
-    /// Currently processing request ID.
+    /// Request queue managing pending, in-flight, and confirmation state.
+    request_queue: RequestQueue,
+    /// Currently processing request ID (for external reference).
     current: Option<RequestId>,
-    /// Cancellation token for current operation.
-    current_cancel: Option<CancellationToken>,
-    /// In-flight request being processed in background.
-    in_flight: Option<InFlightRequest>,
-    /// Whether awaiting user confirmation (pauses queue).
-    awaiting_confirmation: bool,
 }
 
 impl OrchestratorActor {
@@ -235,11 +234,8 @@ impl OrchestratorActor {
             receiver,
             progress_tx,
             response_tx,
-            queue: VecDeque::new(),
+            request_queue: RequestQueue::new(),
             current: None,
-            current_cancel: None,
-            in_flight: None,
-            awaiting_confirmation: false,
         };
 
         let handle = OrchestratorHandle { sender };
@@ -250,25 +246,18 @@ impl OrchestratorActor {
     /// Returns the current queue depth.
     #[allow(dead_code)]
     pub fn queue_depth(&self) -> usize {
-        self.queue.len()
+        self.request_queue.pending_count()
     }
 
     /// Sends a queue update to the TUI.
     async fn send_queue_update(&self) {
-        let positions: Vec<(RequestId, usize)> = self
-            .queue
-            .iter()
-            .enumerate()
-            .map(|(idx, req)| (req.id, idx + 1))
-            .collect();
-
         let _ = self
             .response_tx
             .send(OrchestratorResponse::QueueUpdate {
-                queue_depth: self.queue.len(),
-                max_depth: MAX_QUEUE_DEPTH,
+                queue_depth: self.request_queue.pending_count(),
+                max_depth: self.request_queue.max_depth(),
                 current: self.current,
-                positions,
+                positions: self.request_queue.get_queue_positions(),
             })
             .await;
     }
@@ -276,30 +265,30 @@ impl OrchestratorActor {
     /// Enqueues a request if queue is not full.
     /// Returns the queue position (1-indexed) or None if queue is full.
     async fn enqueue(&mut self, request: PendingRequest) -> Option<usize> {
-        if self.queue.len() >= MAX_QUEUE_DEPTH {
-            let _ = self
-                .response_tx
-                .send(OrchestratorResponse::QueueFull { id: request.id })
-                .await;
-            return None;
-        }
-
         let id = request.id;
-        self.queue.push_back(request);
-        let position = self.queue.len();
 
-        let _ = self
-            .response_tx
-            .send(OrchestratorResponse::Queued { id, position })
-            .await;
-        self.send_queue_update().await;
-
-        Some(position)
+        match self.request_queue.enqueue(request) {
+            QueueEvent::Queued { position } => {
+                let _ = self
+                    .response_tx
+                    .send(OrchestratorResponse::Queued { id, position })
+                    .await;
+                self.send_queue_update().await;
+                Some(position)
+            }
+            QueueEvent::QueueFull => {
+                let _ = self
+                    .response_tx
+                    .send(OrchestratorResponse::QueueFull { id })
+                    .await;
+                None
+            }
+        }
     }
 
     /// Processes the next request from the queue.
     async fn process_next(&mut self) {
-        let Some(request) = self.queue.pop_front() else {
+        let Some(request) = self.request_queue.try_dequeue() else {
             return;
         };
 
@@ -318,10 +307,9 @@ impl OrchestratorActor {
         }
 
         let id = request.id;
-        let started_at = Instant::now();
+        let cancel = request.cancel.clone();
 
         self.current = Some(id);
-        self.current_cancel = Some(request.cancel.clone());
 
         let _ = self
             .response_tx
@@ -335,23 +323,18 @@ impl OrchestratorActor {
         // Process request inline (background spawning will be added in future iteration)
         match request.request_type {
             RequestType::NaturalLanguage => {
-                self.process_input(id, &request.input, request.cancel).await;
+                self.process_input(id, &request.input, cancel).await;
             }
             RequestType::RawSql => {
-                self.process_sql(id, &request.input, request.cancel).await;
+                self.process_sql(id, &request.input, cancel).await;
             }
             RequestType::Confirmation => {
-                self.process_confirmation(id, &request.input, request.cancel)
-                    .await;
+                self.process_confirmation(id, &request.input, cancel).await;
             }
         }
 
-        // Track processing time
-        let _elapsed = started_at.elapsed();
-
         self.current = None;
-        self.current_cancel = None;
-        self.in_flight = None;
+        self.request_queue.clear_in_flight();
         self.send_queue_update().await;
     }
 
@@ -384,7 +367,7 @@ impl OrchestratorActor {
                 let _ = self.progress_tx.send(ProgressMessage::LlmComplete(String::new())).await;
                 match result {
                     Ok(InputResult::NeedsConfirmation { sql, classification }) => {
-                        self.awaiting_confirmation = true; // Pause queue
+                        self.request_queue.set_confirmation_pending(true); // Pause queue
                         let _ = self.response_tx.send(OrchestratorResponse::NeedsConfirmation {
                             id,
                             sql,
@@ -461,12 +444,10 @@ impl OrchestratorActor {
 
     /// Cancels the current operation.
     fn cancel_current(&mut self) {
-        if let Some(token) = self.current_cancel.take() {
+        if let Some(token) = self.request_queue.cancel_current() {
             token.cancel();
         }
-        if let Some(in_flight) = self.in_flight.take() {
-            in_flight.task.abort(); // Immediately abort the task
-        }
+        self.current = None;
     }
 
     /// Cancels a specific queued request by ID.
@@ -477,20 +458,17 @@ impl OrchestratorActor {
             return;
         }
 
-        // Find and remove from queue
-        if let Some(pos) = self.queue.iter().position(|r| r.id == id) {
-            if let Some(request) = self.queue.remove(pos) {
-                request.cancel.cancel();
-                let log_entry = Self::log_entry_for_cancelled(&request);
-                let _ = self
-                    .response_tx
-                    .send(OrchestratorResponse::Cancelled {
-                        id: request.id,
-                        log_entry,
-                    })
-                    .await;
-                self.send_queue_update().await;
-            }
+        // Try to cancel from queue
+        if let Some(request) = self.request_queue.cancel_by_id(id) {
+            let log_entry = Self::log_entry_for_cancelled(&request);
+            let _ = self
+                .response_tx
+                .send(OrchestratorResponse::Cancelled {
+                    id: request.id,
+                    log_entry,
+                })
+                .await;
+            self.send_queue_update().await;
         }
     }
 
@@ -500,8 +478,8 @@ impl OrchestratorActor {
         self.cancel_current();
 
         // Cancel all queued
-        while let Some(request) = self.queue.pop_front() {
-            request.cancel.cancel();
+        let cancelled = self.request_queue.cancel_all();
+        for request in cancelled {
             let log_entry = Self::log_entry_for_cancelled(&request);
             let _ = self
                 .response_tx
@@ -516,76 +494,105 @@ impl OrchestratorActor {
     }
 
     /// Runs the actor loop, processing commands until Shutdown is received.
+    /// Runs the actor loop, processing commands until Shutdown is received.
     pub async fn run(mut self) {
-        let mut progress_ticker = tokio::time::interval(Duration::from_millis(100));
+        let mut ticker = tokio::time::interval(Duration::from_millis(100));
 
         loop {
             tokio::select! {
                 biased;
 
-                // Commands have priority for responsiveness
                 Some(cmd) = self.receiver.recv() => {
-                    if self.handle_command(cmd).await {
+                    let action = Self::classify_command(cmd);
+                    if matches!(action, CommandAction::Shutdown) {
                         break;
                     }
+                    self.execute_action(action).await;
                 }
 
-                // Progress updates every 100ms
-                _ = progress_ticker.tick() => {
-                    if let Some(ref req) = self.in_flight {
-                        let elapsed = req.started_at.elapsed();
-                        let _ = self.response_tx.send(OrchestratorResponse::Progress {
-                            id: req.id,
-                            phase: req.phase,
-                            elapsed,
-                            detail: None,
-                        }).await;
-                    }
+                _ = ticker.tick() => {
+                    self.maybe_send_progress().await;
                 }
 
-                // Process next queued request when idle
-                _ = async {}, if self.in_flight.is_none() && !self.queue.is_empty() && !self.awaiting_confirmation => {
+                _ = async {}, if self.request_queue.can_process_next() => {
                     self.process_next().await;
                 }
             }
         }
 
-        // Graceful shutdown: cancel all pending operations
-        self.cancel_all().await;
+        self.shutdown().await;
+    }
 
-        // Close database connection
+    /// Sends progress update if there's an in-flight request.
+    async fn maybe_send_progress(&self) {
+        if let Some(req) = self.request_queue.in_flight() {
+            let _ = self
+                .response_tx
+                .send(OrchestratorResponse::Progress {
+                    id: req.id,
+                    phase: req.phase,
+                    elapsed: req.started_at.elapsed(),
+                    detail: None,
+                })
+                .await;
+        }
+    }
+
+    /// Gracefully shuts down the actor.
+    async fn shutdown(&mut self) {
+        self.cancel_all().await;
         if let Err(e) = self.orchestrator.close().await {
             warn!("Error closing orchestrator: {}", e);
         }
     }
 
-    /// Handles a command. Returns true if should exit.
-    async fn handle_command(&mut self, cmd: OrchestratorCommand) -> bool {
+    /// Classifies a command into an action.
+    ///
+    /// This is a pure function that maps incoming commands to internal actions,
+    /// separating command parsing from execution.
+    fn classify_command(cmd: OrchestratorCommand) -> CommandAction {
         match cmd {
             OrchestratorCommand::ProcessInput { id, input, cancel } => {
-                let request = PendingRequest {
+                CommandAction::Enqueue(PendingRequest {
                     id,
                     input,
                     request_type: RequestType::NaturalLanguage,
                     queued_at: Instant::now(),
                     cancel,
-                };
-                self.enqueue(request).await;
+                })
             }
-
             OrchestratorCommand::ExecuteSql { id, sql, cancel } => {
-                let request = PendingRequest {
+                CommandAction::Enqueue(PendingRequest {
                     id,
                     input: sql,
                     request_type: RequestType::RawSql,
                     queued_at: Instant::now(),
                     cancel,
-                };
+                })
+            }
+            OrchestratorCommand::ConfirmQuery { id, sql, cancel } => {
+                CommandAction::Confirm { id, sql, cancel }
+            }
+            OrchestratorCommand::CancelCurrent => CommandAction::CancelCurrent,
+            OrchestratorCommand::CancelRequest(id) => CommandAction::CancelById(id),
+            OrchestratorCommand::CancelAll => CommandAction::CancelAll,
+            OrchestratorCommand::CancelPendingQuery { sql } => {
+                CommandAction::CancelPendingQuery { sql }
+            }
+            OrchestratorCommand::Shutdown => CommandAction::Shutdown,
+        }
+    }
+
+    /// Executes a command action.
+    ///
+    /// This is the async method that performs the actual work for each action.
+    async fn execute_action(&mut self, action: CommandAction) {
+        match action {
+            CommandAction::Enqueue(request) => {
                 self.enqueue(request).await;
             }
-
-            OrchestratorCommand::ConfirmQuery { id, sql, cancel } => {
-                self.awaiting_confirmation = false; // Resume queue
+            CommandAction::Confirm { id, sql, cancel } => {
+                self.request_queue.set_confirmation_pending(false);
                 let request = PendingRequest {
                     id,
                     input: sql,
@@ -595,21 +602,17 @@ impl OrchestratorActor {
                 };
                 self.enqueue(request).await;
             }
-
-            OrchestratorCommand::CancelCurrent => {
+            CommandAction::CancelCurrent => {
                 self.cancel_current();
             }
-
-            OrchestratorCommand::CancelRequest(id) => {
+            CommandAction::CancelById(id) => {
                 self.cancel_request(id).await;
             }
-
-            OrchestratorCommand::CancelAll => {
+            CommandAction::CancelAll => {
                 self.cancel_all().await;
             }
-
-            OrchestratorCommand::CancelPendingQuery { sql } => {
-                self.awaiting_confirmation = false; // Resume queue
+            CommandAction::CancelPendingQuery { sql } => {
+                self.request_queue.set_confirmation_pending(false);
                 let (msg, log_entry) = self.orchestrator.cancel_query(sql.as_deref()).await;
                 let _ = self
                     .response_tx
@@ -619,12 +622,10 @@ impl OrchestratorActor {
                     })
                     .await;
             }
-
-            OrchestratorCommand::Shutdown => {
-                return true;
+            CommandAction::Shutdown => {
+                // Handled in run() loop
             }
         }
-        false
     }
 
     /// Returns elapsed time since a request was queued.
@@ -1102,5 +1103,127 @@ mod tests {
     async fn test_request_id_display() {
         let id = RequestId(42);
         assert_eq!(format!("{}", id), "#42");
+    }
+
+    // Tests for classify_command (pure function)
+
+    #[test]
+    fn classify_command_process_input_returns_enqueue() {
+        let id = RequestId::new();
+        let cmd = OrchestratorCommand::ProcessInput {
+            id,
+            input: "test".to_string(),
+            cancel: CancellationToken::new(),
+        };
+
+        let action = OrchestratorActor::classify_command(cmd);
+        match action {
+            CommandAction::Enqueue(req) => {
+                assert_eq!(req.id, id);
+                assert_eq!(req.request_type, RequestType::NaturalLanguage);
+            }
+            _ => panic!("Expected Enqueue action"),
+        }
+    }
+
+    #[test]
+    fn classify_command_execute_sql_returns_enqueue() {
+        let id = RequestId::new();
+        let cmd = OrchestratorCommand::ExecuteSql {
+            id,
+            sql: "SELECT 1".to_string(),
+            cancel: CancellationToken::new(),
+        };
+
+        let action = OrchestratorActor::classify_command(cmd);
+        match action {
+            CommandAction::Enqueue(req) => {
+                assert_eq!(req.id, id);
+                assert_eq!(req.request_type, RequestType::RawSql);
+            }
+            _ => panic!("Expected Enqueue action"),
+        }
+    }
+
+    #[test]
+    fn classify_command_confirm_query_returns_confirm() {
+        let id = RequestId::new();
+        let cmd = OrchestratorCommand::ConfirmQuery {
+            id,
+            sql: "DELETE FROM users".to_string(),
+            cancel: CancellationToken::new(),
+        };
+
+        let action = OrchestratorActor::classify_command(cmd);
+        match action {
+            CommandAction::Confirm {
+                id: action_id, sql, ..
+            } => {
+                assert_eq!(action_id, id);
+                assert_eq!(sql, "DELETE FROM users");
+            }
+            _ => panic!("Expected Confirm action"),
+        }
+    }
+
+    #[test]
+    fn classify_command_cancel_current_returns_cancel_current() {
+        let cmd = OrchestratorCommand::CancelCurrent;
+        let action = OrchestratorActor::classify_command(cmd);
+        assert!(matches!(action, CommandAction::CancelCurrent));
+    }
+
+    #[test]
+    fn classify_command_cancel_request_returns_cancel_by_id() {
+        let id = RequestId::new();
+        let cmd = OrchestratorCommand::CancelRequest(id);
+        let action = OrchestratorActor::classify_command(cmd);
+        match action {
+            CommandAction::CancelById(action_id) => assert_eq!(action_id, id),
+            _ => panic!("Expected CancelById action"),
+        }
+    }
+
+    #[test]
+    fn classify_command_cancel_all_returns_cancel_all() {
+        let cmd = OrchestratorCommand::CancelAll;
+        let action = OrchestratorActor::classify_command(cmd);
+        assert!(matches!(action, CommandAction::CancelAll));
+    }
+
+    #[test]
+    fn classify_command_cancel_pending_query_returns_cancel_pending_query() {
+        let cmd = OrchestratorCommand::CancelPendingQuery {
+            sql: Some("SELECT 1".to_string()),
+        };
+        let action = OrchestratorActor::classify_command(cmd);
+        match action {
+            CommandAction::CancelPendingQuery { sql } => {
+                assert_eq!(sql, Some("SELECT 1".to_string()));
+            }
+            _ => panic!("Expected CancelPendingQuery action"),
+        }
+    }
+
+    #[test]
+    fn classify_command_shutdown_returns_shutdown() {
+        let cmd = OrchestratorCommand::Shutdown;
+        let action = OrchestratorActor::classify_command(cmd);
+        assert!(matches!(action, CommandAction::Shutdown));
+    }
+
+    #[test]
+    fn classify_command_is_pure_same_input_same_output() {
+        // Test that same input always produces the same output
+        let id = RequestId(999);
+
+        for _ in 0..3 {
+            let cmd = OrchestratorCommand::CancelRequest(id);
+            let action = OrchestratorActor::classify_command(cmd);
+            match action {
+                CommandAction::CancelById(action_id) => assert_eq!(action_id.as_u64(), 999),
+                _ => panic!("Expected CancelById action"),
+            }
+        }
     }
 }

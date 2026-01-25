@@ -9,6 +9,8 @@ pub mod headless;
 mod history;
 pub mod orchestrator_actor;
 pub mod output_adapter;
+pub mod progress_reporter;
+pub mod request_queue;
 mod sql_autocomplete;
 mod ui;
 pub mod widgets;
