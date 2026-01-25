@@ -180,8 +180,10 @@ mod tests {
 
     #[test]
     fn test_cancelled_status_renders() {
-        let entry =
-            QueryLogEntry::cancelled_with_source("SELECT 1".to_string(), crate::tui::app::QuerySource::Manual);
+        let entry = QueryLogEntry::cancelled_with_source(
+            "SELECT 1".to_string(),
+            crate::tui::app::QuerySource::Manual,
+        );
         let modal = QueryDetailModal::new(&entry);
         let area = Rect::new(0, 0, 80, 20);
         let mut buf = Buffer::empty(area);

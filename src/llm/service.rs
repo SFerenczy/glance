@@ -86,8 +86,12 @@ impl LlmService {
         // Build redacted connection context for LLM prompt
         let connection_ctx = self.build_connection_context(tool_context).await;
 
-        let messages =
-            build_messages_cached(&mut self.prompt_cache, schema, conversation, &connection_ctx);
+        let messages = build_messages_cached(
+            &mut self.prompt_cache,
+            schema,
+            conversation,
+            &connection_ctx,
+        );
         let tools = get_tool_definitions();
 
         tracing::debug!(
@@ -159,15 +163,22 @@ impl LlmService {
         Fut: Future<Output = ()>,
     {
         let start = Instant::now();
-        tracing::debug!(input_len = input.len(), "Starting streaming NL→SQL processing");
+        tracing::debug!(
+            input_len = input.len(),
+            "Starting streaming NL→SQL processing"
+        );
 
         conversation.add_user(input);
 
         // Build redacted connection context for LLM prompt
         let connection_ctx = self.build_connection_context(tool_context).await;
 
-        let messages =
-            build_messages_cached(&mut self.prompt_cache, schema, conversation, &connection_ctx);
+        let messages = build_messages_cached(
+            &mut self.prompt_cache,
+            schema,
+            conversation,
+            &connection_ctx,
+        );
         let tools = get_tool_definitions();
 
         tracing::debug!(
@@ -189,7 +200,10 @@ impl LlmService {
                 }
             }
             Err(err) => {
-                tracing::warn!("Streaming unavailable, falling back to non-streaming: {}", err);
+                tracing::warn!(
+                    "Streaming unavailable, falling back to non-streaming: {}",
+                    err
+                );
                 let mut response = self.client.complete_with_tools(&messages, &tools).await?;
                 if response.has_tool_calls() {
                     response = self
@@ -261,8 +275,12 @@ impl LlmService {
         // Build redacted connection context for LLM prompt
         let connection_ctx = self.build_connection_context(tool_context).await;
 
-        let messages =
-            build_messages_cached(&mut self.prompt_cache, schema, conversation, &connection_ctx);
+        let messages = build_messages_cached(
+            &mut self.prompt_cache,
+            schema,
+            conversation,
+            &connection_ctx,
+        );
 
         self.client
             .continue_with_tool_results(&messages, &response.tool_calls, &tool_results, tools)

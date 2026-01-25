@@ -49,7 +49,6 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-
     // Handle headless mode
     if cli.is_headless() {
         let exit_code = tui::headless::run_headless(&cli).await?;

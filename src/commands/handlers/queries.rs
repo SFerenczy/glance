@@ -66,9 +66,7 @@ pub async fn handle_savequery(
             )
             .await
             {
-                Ok(()) => {
-                    CommandResult::system(format!("Saved query '{}' updated.", args.name))
-                }
+                Ok(()) => CommandResult::system(format!("Saved query '{}' updated.", args.name)),
                 Err(e) => CommandResult::error(e.to_string()),
             }
         }

@@ -340,7 +340,8 @@ impl Orchestrator {
             return self.handle_command(input).await;
         }
 
-        self.handle_natural_language_streaming(input, on_token).await
+        self.handle_natural_language_streaming(input, on_token)
+            .await
     }
 
     /// Handles a command (input starting with /).
@@ -391,7 +392,9 @@ impl Orchestrator {
                 connection::handle_conn_delete(&args, &state_db).await
             }
             Command::History(args) => history::handle_history(&ctx, &args).await,
-            Command::HistoryClear { confirmed } => history::handle_history_clear(&ctx, confirmed).await,
+            Command::HistoryClear { confirmed } => {
+                history::handle_history_clear(&ctx, confirmed).await
+            }
             Command::SaveQuery(args) => {
                 let state_db = require_state_db!(self);
                 queries::handle_savequery(&ctx, &args, &state_db).await
@@ -938,7 +941,10 @@ impl Orchestrator {
     }
 
     /// Cancels a pending query and records it in history.
-    pub async fn cancel_query(&mut self, sql: Option<&str>) -> (ChatMessage, Option<QueryLogEntry>) {
+    pub async fn cancel_query(
+        &mut self,
+        sql: Option<&str>,
+    ) -> (ChatMessage, Option<QueryLogEntry>) {
         // Record the cancellation in history if we have SQL and a connection
         if let (Some(sql), Some(state_db), Some(conn_name)) =
             (sql, &self.state_db, &self.current_connection_name)

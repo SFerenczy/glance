@@ -236,8 +236,7 @@ pub async fn list_saved_queries(
             // For each tag, add a condition that the query has that tag
             for tag in tags {
                 conditions.push(
-                    "id IN (SELECT saved_query_id FROM saved_query_tags WHERE tag = ?)"
-                        .to_string(),
+                    "id IN (SELECT saved_query_id FROM saved_query_tags WHERE tag = ?)".to_string(),
                 );
                 bindings.push(tag.clone());
             }

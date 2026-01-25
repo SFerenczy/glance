@@ -623,8 +623,7 @@ impl App {
             Some(idx) if matches!(self.messages.get(idx), Some(ChatMessage::Assistant(_))) => idx,
             _ => {
                 let idx = self.messages.len();
-                self.messages
-                    .push(ChatMessage::Assistant(String::new()));
+                self.messages.push(ChatMessage::Assistant(String::new()));
                 self.streaming_assistant_index = Some(idx);
                 idx
             }

@@ -140,7 +140,10 @@ pub enum OrchestratorResponse {
     /// Request was queued (not yet processing).
     Queued { id: RequestId, position: usize },
     /// Request started processing.
-    Started { id: RequestId, phase: OperationPhase },
+    Started {
+        id: RequestId,
+        phase: OperationPhase,
+    },
     /// Progress update for a running request.
     Progress {
         id: RequestId,
@@ -208,6 +211,10 @@ pub struct OrchestratorActor {
     current: Option<RequestId>,
     /// Cancellation token for current operation.
     current_cancel: Option<CancellationToken>,
+    /// In-flight request being processed in background.
+    in_flight: Option<InFlightRequest>,
+    /// Whether awaiting user confirmation (pauses queue).
+    awaiting_confirmation: bool,
 }
 
 impl OrchestratorActor {
@@ -227,6 +234,8 @@ impl OrchestratorActor {
             queue: VecDeque::new(),
             current: None,
             current_cancel: None,
+            in_flight: None,
+            awaiting_confirmation: false,
         };
 
         let handle = OrchestratorHandle { sender };
@@ -554,8 +563,7 @@ impl OrchestratorActor {
                 }
 
                 OrchestratorCommand::CancelPendingQuery { sql } => {
-                    let (msg, log_entry) =
-                        self.orchestrator.cancel_query(sql.as_deref()).await;
+                    let (msg, log_entry) = self.orchestrator.cancel_query(sql.as_deref()).await;
                     let _ = self
                         .response_tx
                         .send(OrchestratorResponse::PendingQueryCancelled {
@@ -831,7 +839,11 @@ mod tests {
 
         let id = RequestId::new();
         handle
-            .process_input(id, "Show me all users".to_string(), CancellationToken::new())
+            .process_input(
+                id,
+                "Show me all users".to_string(),
+                CancellationToken::new(),
+            )
             .await
             .unwrap();
 
@@ -866,7 +878,8 @@ mod tests {
             if let Ok(Some(resp)) =
                 timeout(std::time::Duration::from_secs(1), response_rx.recv()).await
             {
-                if matches!(resp, OrchestratorResponse::Completed { id: resp_id, .. } if resp_id == id) {
+                if matches!(resp, OrchestratorResponse::Completed { id: resp_id, .. } if resp_id == id)
+                {
                     break;
                 }
             }

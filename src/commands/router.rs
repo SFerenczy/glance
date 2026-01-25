@@ -372,10 +372,7 @@ impl CommandRouter {
             None
         } else {
             Some(serde_json::Value::Object(
-                extras_map
-                    .into_iter()
-                    .map(|(k, v)| (k, v))
-                    .collect(),
+                extras_map.into_iter().map(|(k, v)| (k, v)).collect(),
             ))
         };
 
@@ -454,10 +451,7 @@ impl CommandRouter {
             None
         } else {
             Some(serde_json::Value::Object(
-                extras_map
-                    .into_iter()
-                    .map(|(k, v)| (k, v))
-                    .collect(),
+                extras_map.into_iter().map(|(k, v)| (k, v)).collect(),
             ))
         };
 
