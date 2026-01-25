@@ -669,6 +669,7 @@ mod tests {
     fn test_completion_after_from() {
         let mut state = SqlCompletionState::new();
         let schema = test_schema();
+        state.force_open();
         state.update("SELECT * FROM ", 14, Some(&schema));
 
         assert!(state.visible);
@@ -680,6 +681,7 @@ mod tests {
     fn test_completion_after_select() {
         let mut state = SqlCompletionState::new();
         let schema = test_schema();
+        state.force_open();
         state.update("SELECT ", 7, Some(&schema));
 
         assert!(state.visible);
@@ -714,6 +716,7 @@ mod tests {
     fn test_completion_close() {
         let mut state = SqlCompletionState::new();
         let schema = test_schema();
+        state.force_open();
         state.update("SELECT * FROM ", 14, Some(&schema));
 
         assert!(state.visible);
@@ -727,6 +730,7 @@ mod tests {
         let mut state = SqlCompletionState::new();
         let schema = test_schema();
         // After column name in WHERE, should suggest operators
+        state.force_open();
         state.update("SELECT * FROM users WHERE status ", 33, Some(&schema));
 
         assert!(state.visible, "Completion should be visible");
@@ -745,6 +749,7 @@ mod tests {
         let mut state = SqlCompletionState::new();
         let schema = test_schema();
         // After operator in WHERE, should suggest values
+        state.force_open();
         state.update("SELECT * FROM users WHERE status = ", 35, Some(&schema));
 
         assert!(state.visible, "Completion should be visible");
@@ -763,6 +768,7 @@ mod tests {
         let mut state = SqlCompletionState::new();
         let schema = test_schema();
         // After complete condition, should suggest AND/OR
+        state.force_open();
         state.update("SELECT * FROM users WHERE id = 1 ", 33, Some(&schema));
 
         assert!(state.visible, "Completion should be visible");
@@ -781,6 +787,7 @@ mod tests {
         let mut state = SqlCompletionState::new();
         let schema = test_schema_with_fk();
         // When orders is in query, should suggest users with FK join template
+        state.force_open();
         state.update("SELECT * FROM orders JOIN ", 26, Some(&schema));
 
         assert!(state.visible, "Completion should be visible");
@@ -804,6 +811,7 @@ mod tests {
         let mut state = SqlCompletionState::new();
         let schema = test_schema_with_fk();
         // When users is in query, should suggest orders with FK join template
+        state.force_open();
         state.update("SELECT * FROM users JOIN ", 25, Some(&schema));
 
         assert!(state.visible, "Completion should be visible");
@@ -823,6 +831,7 @@ mod tests {
         state.record_completion("orders");
 
         // Update with no filter
+        state.force_open();
         state.update("SELECT * FROM ", 14, Some(&schema));
 
         assert!(state.visible);

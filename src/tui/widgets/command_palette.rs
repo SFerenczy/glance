@@ -349,11 +349,11 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_empty_shows_nothing() {
+    fn test_filter_empty_shows_all() {
         let mut state = CommandPaletteState::new();
         state.open();
-        // Per FR-2.3: Minimum 1 character after `/` to filter
-        assert_eq!(state.filtered_commands.len(), 0);
+        // Per v0.2a: Show all commands when filter is empty
+        assert_eq!(state.filtered_commands.len(), COMMANDS.len());
     }
 
     #[test]
