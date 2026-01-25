@@ -171,6 +171,58 @@ Improve UX for commands with multiple parameters like `/conn add`:
 
 ---
 
+## LLM Provider Expansion
+
+### Multi-Provider LLM Support (formerly v0.3)
+
+**Status**: Idea
+**Effort**: Medium-High
+**Value**: High (broader user accessibility)
+
+Expand LLM provider support beyond OpenAI and Anthropic:
+
+- **Ollama support** - Local models for privacy-conscious users
+- **Azure OpenAI support** - Enterprise customers with Azure contracts
+- **Google Gemini support** - Alternative cloud provider
+- **Configurable model selection** - Choose model per provider
+- **Token usage tracking** - Display token consumption and costs
+
+---
+
+## Schema Tools
+
+### Schema Design Assistant (formerly v0.4)
+
+**Status**: Idea
+**Effort**: High
+**Value**: Medium-High (productivity feature)
+
+AI-assisted schema design and management:
+
+- **Schema design assistant** - "Help me design a schema for X"
+- **Migration generation** - "Add a soft delete column to users"
+- **Schema documentation generator** - Auto-generate docs from schema
+- **Table/column description viewer** - Display comments and metadata
+
+---
+
+## Analysis & Quality
+
+### Query Performance Analysis (formerly v0.5)
+
+**Status**: Idea
+**Effort**: High
+**Value**: Medium-High (DBA-oriented feature)
+
+Performance analysis and optimization tools:
+
+- **EXPLAIN ANALYZE integration** - Visual query plan analysis
+- **Index suggestions** - Recommend indexes based on query patterns
+- **Data quality checks** - "Find orphaned records", "Check for NULLs"
+- **Slow query identification** - Highlight expensive queries
+
+---
+
 ## Future Features
 
 ### Schema Refresh Command
@@ -212,6 +264,46 @@ Support multiple simultaneous database connections:
 - Switch between connections with `/conn use <name>`
 - Run queries across multiple databases
 - Compare schemas side-by-side
+
+### SQLite Support
+
+**Status**: Idea
+**Effort**: Medium
+**Value**: Medium-High (local development, embedded use cases)
+
+Add SQLite as a supported database backend.
+
+### MySQL Support
+
+**Status**: Idea
+**Effort**: Medium
+**Value**: High (popular database)
+
+Add MySQL/MariaDB as a supported database backend.
+
+### Saved Queries / Bookmarks
+
+**Status**: Idea
+**Effort**: Low-Medium
+**Value**: Medium
+
+Allow users to save frequently used queries for quick access.
+
+### Plugin System
+
+**Status**: Idea
+**Effort**: High
+**Value**: Medium (extensibility)
+
+Custom tools and extensions via plugin architecture.
+
+### Team Sharing Features
+
+**Status**: Idea
+**Effort**: High
+**Value**: Medium (enterprise feature)
+
+Share queries, connections, and insights with team members.
 
 ### Export Results
 
