@@ -59,10 +59,6 @@ pub struct Cli {
     #[arg(short = 'U', long, value_name = "USER")]
     pub user: Option<String>,
 
-    /// Prompt for password
-    #[arg(short = 'W', long)]
-    pub password: bool,
-
     /// Use named connection from config
     #[arg(short = 'c', long, value_name = "NAME")]
     pub connection: Option<String>,
@@ -156,12 +152,6 @@ impl Cli {
     /// Returns the named connection to use, if specified.
     pub fn connection_name(&self) -> Option<&str> {
         self.connection.as_deref()
-    }
-
-    /// Returns true if the user requested a password prompt.
-    #[allow(dead_code)] // Will be used when password prompting is implemented
-    pub fn prompt_password(&self) -> bool {
-        self.password
     }
 
     /// Returns true if headless mode is enabled.
@@ -259,15 +249,6 @@ mod tests {
         assert_eq!(cli.host, Some("localhost".to_string()));
         assert_eq!(cli.database, Some("mydb".to_string()));
         assert_eq!(cli.user, Some("postgres".to_string()));
-    }
-
-    #[test]
-    fn test_parse_password_flag() {
-        let cli = parse_args(&["glance", "-W"]);
-        assert!(cli.password);
-
-        let cli = parse_args(&["glance", "--password"]);
-        assert!(cli.password);
     }
 
     #[test]
