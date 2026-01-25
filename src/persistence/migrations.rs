@@ -14,6 +14,15 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
 
     let current = get_current_version(pool).await?;
 
+    // Check if database is newer than code
+    if current > CURRENT_VERSION {
+        return Err(GlanceError::persistence(format!(
+            "Database schema version ({}) is newer than supported version ({}). \
+             Please upgrade Glance to the latest version.",
+            current, CURRENT_VERSION
+        )));
+    }
+
     if current < CURRENT_VERSION {
         info!(
             "Migrating state database from version {} to {}",

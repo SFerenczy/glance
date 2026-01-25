@@ -150,6 +150,8 @@ pub struct StateDb {
     db_path: PathBuf,
     secret_storage: SecretStorage,
     config: StateDbConfig,
+    /// Whether the database was recovered from corruption during this session.
+    recovered: bool,
 }
 
 #[allow(dead_code)]
@@ -175,7 +177,7 @@ impl StateDb {
 
         let secret_storage = SecretStorage::new();
 
-        match Self::try_open(path, &secret_storage, &config).await {
+        match Self::try_open(path, &secret_storage, &config, false).await {
             Ok(db) => Ok(db),
             Err(e) => {
                 warn!("Failed to open state database: {e}. Attempting recovery...");
@@ -196,6 +198,7 @@ impl StateDb {
         path: &std::path::Path,
         secret_storage: &SecretStorage,
         config: &StateDbConfig,
+        recovered: bool,
     ) -> Result<Self> {
         let mut last_error = None;
 
@@ -210,6 +213,7 @@ impl StateDb {
                     info!(
                         path = %path.display(),
                         pool_size = config.pool_size,
+                        recovered,
                         "State database opened"
                     );
                     return Ok(Self {
@@ -217,6 +221,7 @@ impl StateDb {
                         db_path: path.to_path_buf(),
                         secret_storage: secret_storage.clone(),
                         config: config.clone(),
+                        recovered,
                     });
                 }
                 Err(e) => {
@@ -279,7 +284,7 @@ impl StateDb {
             warn!("Backed up corrupted database to {}", backup_path.display());
         }
 
-        Self::try_open(path, secret_storage, config)
+        Self::try_open(path, secret_storage, config, true)
             .await
             .map_err(|e| {
                 GlanceError::persistence(format!("Failed to recreate database after backup: {e}"))
@@ -304,6 +309,11 @@ impl StateDb {
     /// Returns the status of secure storage availability.
     pub fn secret_storage_status(&self) -> SecretStorageStatus {
         self.secret_storage.status()
+    }
+
+    /// Returns whether the database was recovered from corruption.
+    pub fn was_recovered(&self) -> bool {
+        self.recovered
     }
 
     /// Closes the database connection pool.
@@ -355,6 +365,7 @@ impl StateDb {
             db_path: PathBuf::from(":memory:"),
             secret_storage,
             config,
+            recovered: false,
         })
     }
 }
