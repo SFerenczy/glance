@@ -7,13 +7,20 @@
 ## Table of Contents
 
 - [Core Principles](#core-principles)
+- [AI Development Lifecycle](#ai-development-lifecycle)
 - [Architecture Patterns](#architecture-patterns)
 - [Development Workflow](#development-workflow)
 - [Functional Programming](#functional-programming)
 - [Immutability](#immutability)
 - [Testing Strategy](#testing-strategy)
+- [Headless TUI Debugging](#headless-tui-debugging)
 - [SOLID in Rust](#solid-in-rust)
 - [Error Handling](#error-handling)
+- [Security](#security)
+- [Performance](#performance)
+- [Concurrency](#concurrency)
+- [Dependency Management](#dependency-management)
+- [Logging & Observability](#logging--observability)
 - [Related Documentation](#related-documentation)
 
 ---
@@ -25,8 +32,103 @@
 3. **Test-driven** — Write tests before or alongside implementation
 4. **Explicit over clever** — Code should be obvious and traceable
 5. **Composition over inheritance** — Use traits and composition, not complex hierarchies
+6. **AI-first** — Consistent naming, one concept per file, shallow nesting, searchable code
 
 These align with our [architectural goals](docs/ARCHITECTURE.md#architectural-principles).
+
+---
+
+## AI Development Lifecycle
+
+When working with AI agents on non-trivial features, follow a phased approach that separates concerns:
+
+### The Four Phases
+
+| Phase | Focus | Output |
+|-------|-------|--------|
+| **Spec** | WHAT to build | Requirements, acceptance criteria, constraints |
+| **Plan** | HOW to build it | Technical approach, files to change, architecture decisions |
+| **Implement** | Build it | Working code, tests |
+| **Reflect** | Learn from it | What worked, what didn't, process improvements |
+
+### Spec vs Plan: The Critical Distinction
+
+These phases solve different problems and must stay separate:
+
+| Spec (What) | Plan (How) |
+|-------------|------------|
+| "Users can search by email" | "Add `find_by_email` to `UserRepository`" |
+| "Results paginate at 50 items" | "Use cursor-based pagination in the API" |
+| "Errors show user-friendly messages" | "Map `QueryError` variants to UI strings" |
+| "Query history persists across sessions" | "Store in SQLite via `HistoryStore` trait" |
+
+**Why this matters:** Specs force you to think clearly about requirements before committing to an approach. A good spec can be implemented multiple ways; a plan is one specific way.
+
+### Keeping AI in Spec Mode
+
+AI tends to jump to planning because it wants to be helpful. To keep it in spec mode:
+
+1. **Be explicit**: *"Write a spec for X. Do NOT include implementation details, file names, or technical approach. Focus only on requirements and acceptance criteria."*
+
+2. **Use a template** that forces spec-thinking:
+
+```markdown
+## Problem Statement
+What problem are we solving? Why does it matter?
+
+## User Stories
+- As a [role], I want [capability] so that [benefit]
+
+## Acceptance Criteria
+- Given [context], when [action], then [result]
+- Given [context], when [action], then [result]
+
+## Out of Scope
+What are we explicitly NOT doing?
+
+## Open Questions
+What needs clarification before planning?
+```
+
+3. **Gate the transition**: Don't move to planning until the spec is reviewed and approved. *"Now that the spec is approved, create an implementation plan."*
+
+### Phase Workflow
+
+```
+┌─────────┐     ┌─────────┐     ┌─────────────┐     ┌─────────┐
+│  Spec   │────▶│  Plan   │────▶│ Implement   │────▶│ Reflect │
+└─────────┘     └─────────┘     └─────────────┘     └─────────┘
+     │               │                 │                  │
+     ▼               ▼                 ▼                  ▼
+ specs.md        plan.md           Code + Tests      Notes for
+ (reviewed)      (reviewed)        (committed)       next time
+```
+
+**Important:** `specs.md` and `plan.md` are working documents. They should NOT be committed to the repository (see [Small, Atomic Commits](#small-atomic-commits)).
+
+### When to Use This Workflow
+
+**Use for:**
+- New features with multiple components
+- Changes that affect public interfaces
+- Work that spans multiple files or modules
+- Anything where requirements aren't crystal clear
+
+**Skip for:**
+- Bug fixes with obvious solutions
+- Single-file changes
+- Refactoring with clear scope
+- Documentation updates
+
+### Reflection Phase
+
+After completing work, briefly note:
+- What went well?
+- What took longer than expected?
+- What would you do differently?
+- Any patterns worth extracting?
+
+This closes the feedback loop and improves future iterations.
 
 ---
 
@@ -117,6 +219,13 @@ Each commit should:
 - Have a clear message
 - Be reviewable independently
 
+**When to commit:**
+- **For small tasks**: One commit at the end, after all changes are complete and verified
+- **For larger tasks**: Commit incrementally after each working milestone (e.g., after implementing a function, after adding tests, after a refactor)
+- **Rule**: Every commit must leave the codebase in a working state — `just precommit` must pass before each commit
+
+**Never commit:** `plan.md` or `specs.md` files — these are temporary working documents.
+
 **Good:**
 ```
 feat(llm): add streaming support for Anthropic client
@@ -131,6 +240,18 @@ Fix stuff
 - Added feature
 - Refactored things
 ```
+
+### Branch Merging
+
+- **Always rebase before merging**: Keep history linear by rebasing feature branches onto main before merging
+- **Always use fast-forward merge**: After rebasing, merge with `--ff-only` to avoid merge commits
+- **Workflow**:
+  1. `git rebase main` (while on feature branch)
+  2. Resolve any conflicts
+  3. `git checkout main`
+  4. `git merge --ff-only <feature-branch>`
+
+This keeps the commit history clean and linear.
 
 ### Continuous Verification
 
@@ -401,6 +522,89 @@ fn should_format_execution_time() {
 }
 ```
 
+**Gherkin for specifications:** Use standard Gherkin syntax in plan documents and specs:
+
+```gherkin
+Feature: Query execution
+  As a database user
+  I want to run SQL queries through natural language
+  So that I can explore data without writing SQL
+
+  Scenario: Simple table query
+    Given a connected database with a "users" table
+    When I type "show me all users"
+    And I press Enter
+    Then I should see a table with user data
+    And the query log should contain the executed SQL
+```
+
+---
+
+## Headless TUI Debugging
+
+Glance includes a headless mode for AI-assisted TUI debugging. Use this to test UI behavior without a terminal.
+
+### Running Headless Tests
+
+```bash
+# Basic execution with inline events
+glance --headless --mock-db --events "type:hello,key:enter"
+
+# Load events from a script file
+glance --headless --mock-db --script tests/tui/fixtures/basic_flow.txt
+
+# Get JSON output for programmatic analysis
+glance --headless --mock-db --events "type:test" --output json
+
+# Frame-by-frame debugging (see state after each event)
+glance --headless --mock-db --events "type:a,type:b" --output frames
+```
+
+### Event DSL Reference
+
+| Event                  | Example                             | Description                                    |
+| ---------------------- | ----------------------------------- | ---------------------------------------------- |
+| `key:`                 | `key:enter`, `key:ctrl+c`, `key:f1` | Key press with optional modifiers              |
+| `type:`                | `type:hello world`                  | Type text into input field                     |
+| `wait:`                | `wait:100ms`, `wait:2s`             | Wait for duration                              |
+| `resize:`              | `resize:120x40`                     | Resize terminal to WxH                         |
+| `assert:contains:`     | `assert:contains:hello`             | Assert screen contains text (case-insensitive) |
+| `assert:not-contains:` | `assert:not-contains:error`         | Assert screen does NOT contain text            |
+| `assert:matches:`      | `assert:matches:user\d+`            | Assert screen matches regex                    |
+| `assert:state:`        | `assert:state:focus=Input`          | Assert application state field                 |
+
+### Script File Format
+
+```txt
+# Comments start with #
+type:show tables
+key:enter
+wait:100ms
+assert:contains:Welcome
+```
+
+### Exit Codes
+
+| Code | Meaning                                      |
+| ---- | -------------------------------------------- |
+| 0    | Success (all assertions passed)              |
+| 1    | Test failure (one or more assertions failed) |
+| 2    | Error (invalid syntax, configuration error)  |
+
+### Debugging Workflow
+
+1. **Reproduce the issue**: Write events that trigger the bug
+2. **Use frames output**: See exactly what happens after each event
+3. **Add assertions**: Verify expected behavior at each step
+4. **Iterate**: Refine events until the issue is isolated
+
+### Example: Testing Input Flow
+
+```bash
+glance --headless --mock-db --output frames --events \
+  "type:show users,assert:contains:show users,key:enter,wait:100"
+```
+
 ---
 
 ## SOLID in Rust
@@ -496,11 +700,6 @@ pub struct Orchestrator {
 }
 ```
 
-**Benefits:**
-- Test with mock implementations
-- Swap providers at runtime
-- Clear module boundaries
-
 ---
 
 ## Error Handling
@@ -533,6 +732,54 @@ pub enum QueryError {
 Errors are displayed user-friendly in TUI, with full details in debug mode.
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md#error-handling-strategy) for more.
+
+---
+
+## Security
+
+- Sanitize all user inputs
+- **No SQL string concatenation** — Always use parameterized queries
+- Secrets never in code or logs
+- Validate connection strings and file paths
+- Follow principle of least privilege for database connections
+
+---
+
+## Performance
+
+- No premature optimization, but be allocation-aware
+- Prefer `&str` over `String` where ownership isn't needed
+- Use `Cow<str>` for flexible ownership patterns
+- Profile before optimizing — measure, don't guess
+- Be mindful of hot paths in database operations
+
+---
+
+## Concurrency
+
+- Prefer `async`/`await` for I/O-bound work
+- Use channels over shared mutable state
+- Document any `unsafe` code with explicit safety invariants
+- Avoid blocking in async contexts
+
+---
+
+## Dependency Management
+
+- **Minimal dependencies**: Justify each crate added
+- Prefer well-maintained, audited crates with active communities
+- Pin versions explicitly in `Cargo.toml`
+- Run `cargo audit` regularly for security vulnerabilities
+- Evaluate transitive dependencies — avoid crates that pull in the world
+
+---
+
+## Logging & Observability
+
+- Use structured logging with `tracing`
+- Log at appropriate levels — don't spam INFO
+- Include context in error messages
+- Sensitive data must never appear in logs
 
 ---
 
