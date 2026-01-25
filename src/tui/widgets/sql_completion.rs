@@ -271,6 +271,24 @@ impl SqlCompletionState {
                 .then_with(|| a.text.to_lowercase().cmp(&b.text.to_lowercase()))
         });
 
+        // Auto-trigger in contexts that should show suggestions even without typing
+        let auto_trigger_contexts = matches!(
+            result.context,
+            SqlContext::FromTable
+                | SqlContext::SelectColumns
+                | SqlContext::JoinTable
+                | SqlContext::WhereClause
+                | SqlContext::WhereOperator
+                | SqlContext::WhereValue
+                | SqlContext::WhereContinuation
+                | SqlContext::UpdateTable
+                | SqlContext::InsertTable
+        );
+
+        if auto_trigger_contexts && !self.items.is_empty() {
+            self.force_opened = true;
+        }
+
         // Update visibility: only show if we have items AND (filter is not empty OR force-opened)
         self.visible = !self.items.is_empty() && (!self.filter.is_empty() || self.force_opened);
         self.selected = 0;
