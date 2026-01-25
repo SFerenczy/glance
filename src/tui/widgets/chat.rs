@@ -461,7 +461,7 @@ mod tests {
     #[test]
     fn test_chat_panel_empty() {
         let messages: Vec<ChatMessage> = vec![];
-        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false, None);
         let lines = panel.render_messages(80);
         assert!(lines.is_empty());
     }
@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn test_chat_panel_user_message() {
         let messages = vec![ChatMessage::User("Hello".to_string())];
-        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false, None);
         let lines = panel.render_messages(80);
 
         // Should have label + content
@@ -479,7 +479,7 @@ mod tests {
     #[test]
     fn test_chat_panel_multiline_message() {
         let messages = vec![ChatMessage::User("Line 1\nLine 2\nLine 3".to_string())];
-        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false, None);
         let lines = panel.render_messages(80);
 
         // Should have label + 3 content lines
@@ -497,7 +497,7 @@ mod tests {
             was_truncated: false,
         };
         let messages = vec![ChatMessage::Result(result)];
-        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false, None);
         let lines = panel.render_messages(80);
 
         // Should have table lines
@@ -510,7 +510,7 @@ mod tests {
             ChatMessage::User("Hello".to_string()),
             ChatMessage::Assistant("Hi there!".to_string()),
         ];
-        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false, None);
         let lines = panel.render_messages(80);
 
         // Should have lines for both messages plus spacing
@@ -521,7 +521,7 @@ mod tests {
     fn test_chat_panel_with_spinner() {
         let messages = vec![ChatMessage::User("Hello".to_string())];
         let spinner = Spinner::thinking();
-        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, Some(&spinner), false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, Some(&spinner), false, None);
         let lines = panel.render_messages(80);
 
         // Should have user message (2 lines) + spacing + spinner (1 line)

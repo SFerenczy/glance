@@ -185,7 +185,7 @@ mod tests {
         assert_eq!(history.next(), Some("second"));
         assert_eq!(history.next(), Some("third"));
         assert_eq!(history.next(), Some("current")); // Back to draft
-        assert_eq!(history.next(), None); // Already at newest
+        assert_eq!(history.next(), Some("")); // Already at newest - clear input
     }
 
     #[test]
@@ -229,6 +229,6 @@ mod tests {
     fn test_empty_history_navigation() {
         let mut history = InputHistory::new();
         assert_eq!(history.previous("input"), None);
-        assert_eq!(history.next(), None);
+        assert_eq!(history.next(), Some("")); // Empty history - clear input
     }
 }

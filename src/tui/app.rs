@@ -2187,6 +2187,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::UiConfig;
 
     #[test]
     fn test_input_insert() {
@@ -2279,7 +2280,7 @@ mod tests {
 
     #[test]
     fn test_app_add_message() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
         app.add_message(ChatMessage::User("Hello".to_string()));
         assert_eq!(app.messages.len(), 2);
         app.add_message(ChatMessage::Assistant("Hi there!".to_string()));
@@ -2288,7 +2289,7 @@ mod tests {
 
     #[test]
     fn test_app_clear_messages() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
         app.add_message(ChatMessage::User("Hello".to_string()));
         app.clear_messages();
         assert!(app.messages.is_empty());
@@ -2310,7 +2311,7 @@ mod tests {
 
     #[test]
     fn test_chat_scroll_sticky_behavior() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
 
         // When at bottom (scroll=0), adding message keeps us at bottom
         app.chat_scroll = 0;
@@ -2327,7 +2328,7 @@ mod tests {
 
     #[test]
     fn test_chat_scroll_reset_on_clear() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
         app.chat_scroll = 5;
         app.clear_messages();
         assert_eq!(app.chat_scroll, 0);
@@ -2387,7 +2388,7 @@ mod tests {
 
     #[test]
     fn test_app_add_query_log() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
         assert!(app.query_log.is_empty());
 
         let entry1 = QueryLogEntry::success("SELECT 1".to_string(), Duration::from_millis(10), 1);
@@ -2404,7 +2405,7 @@ mod tests {
 
     #[test]
     fn test_app_query_selection_navigation() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
 
         // Add some queries
         app.add_query_log(QueryLogEntry::success(
@@ -2454,7 +2455,7 @@ mod tests {
 
     #[test]
     fn test_app_query_detail_modal() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
         app.add_query_log(QueryLogEntry::success(
             "SELECT 1".to_string(),
             Duration::from_millis(1),
@@ -2478,7 +2479,7 @@ mod tests {
 
     #[test]
     fn test_app_selected_query_entry() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
         app.add_query_log(QueryLogEntry::success(
             "SELECT 1".to_string(),
             Duration::from_millis(1),
@@ -2497,7 +2498,7 @@ mod tests {
 
     #[test]
     fn test_history_selection_navigation() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
 
         // Add some history
         app.input_history.push("query1".to_string());
@@ -2526,7 +2527,7 @@ mod tests {
 
     #[test]
     fn test_load_selected_history() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
 
         // Add some history
         app.input_history.push("SELECT 1".to_string());
@@ -2546,7 +2547,7 @@ mod tests {
 
     #[test]
     fn test_masked_input_state() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
 
         // Start masked input
         app.start_masked_input("/llm key".to_string(), "Enter API Key".to_string());
@@ -2563,7 +2564,7 @@ mod tests {
 
     #[test]
     fn test_masked_input_flow() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
 
         // Start masked input
         app.start_masked_input("/llm key".to_string(), "Enter API Key".to_string());
@@ -2582,7 +2583,7 @@ mod tests {
 
     #[test]
     fn test_secret_warning_dismiss() {
-        let mut app = App::new(None);
+        let mut app = App::new(None, &UiConfig::default());
 
         // Set up warning state
         app.secret_storage_status = SecretStorageStatus::PlaintextConsented;
