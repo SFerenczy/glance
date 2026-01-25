@@ -383,8 +383,15 @@ pub struct App {
     pub input_area: Option<ratatui::layout::Rect>,
     /// Pending multi-line paste awaiting user confirmation.
     pub pending_paste: Option<PendingPaste>,
-    /// Index of the assistant message currently receiving streamed tokens.
-    streaming_assistant_index: Option<usize>,
+    /// Pending requests being tracked for UI display.
+    pub pending_requests:
+        std::collections::HashMap<crate::tui::orchestrator_actor::RequestId, PendingRequestView>,
+    /// Stable ordering of pending requests for rendering.
+    pub pending_order: Vec<crate::tui::orchestrator_actor::RequestId>,
+    /// Current queue depth from orchestrator.
+    pub queue_depth: usize,
+    /// Maximum queue depth.
+    pub queue_max: usize,
 }
 
 /// A multi-line paste that may need user confirmation.
@@ -415,6 +422,31 @@ pub struct PendingQuery {
     pub sql: String,
     /// The safety classification of the query.
     pub classification: crate::safety::ClassificationResult,
+}
+
+/// Status of a pending request in the UI.
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)] // Variants used in Phase 4 (UI rendering)
+pub enum RequestStatus {
+    Queued,
+    Processing,
+    Streaming,
+    Cancelled,
+    Error(String),
+}
+
+/// A pending request being tracked for UI display.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used in Phase 4 (UI rendering)
+pub struct PendingRequestView {
+    pub id: crate::tui::orchestrator_actor::RequestId,
+    pub input: String,
+    pub phase: crate::tui::orchestrator_actor::OperationPhase,
+    pub queued_at: std::time::Instant,
+    pub started_at: Option<std::time::Instant>,
+    pub position: Option<usize>,
+    pub streaming_content: String,
+    pub status: RequestStatus,
 }
 
 impl App {
@@ -463,7 +495,10 @@ impl App {
             schema: None,
             input_area: None,
             pending_paste: None,
-            streaming_assistant_index: None,
+            pending_requests: std::collections::HashMap::new(),
+            pending_order: Vec::new(),
+            queue_depth: 0,
+            queue_max: crate::tui::orchestrator_actor::MAX_QUEUE_DEPTH,
         }
     }
 
@@ -610,40 +645,132 @@ impl App {
     pub fn clear_messages(&mut self) {
         self.messages.clear();
         self.chat_scroll = 0;
-        self.streaming_assistant_index = None;
+        // Clear per-request tracking
+        self.pending_requests.clear();
+        self.pending_order.clear();
     }
 
     /// Appends a streaming token to the active assistant message.
+    /// Note: This is deprecated in favor of per-request streaming.
     pub fn append_streaming_token(&mut self, token: &str) {
         if token.is_empty() {
             return;
         }
 
-        let index = match self.streaming_assistant_index {
-            Some(idx) if matches!(self.messages.get(idx), Some(ChatMessage::Assistant(_))) => idx,
-            _ => {
-                let idx = self.messages.len();
-                self.messages.push(ChatMessage::Assistant(String::new()));
-                self.streaming_assistant_index = Some(idx);
-                idx
+        // Find the last assistant message and append to it
+        for message in self.messages.iter_mut().rev() {
+            if let ChatMessage::Assistant(content) = message {
+                content.push_str(token);
+                if self.chat_scroll > 0 {
+                    self.has_new_messages = true;
+                }
+                return;
             }
-        };
+        }
 
-        if let Some(ChatMessage::Assistant(content)) = self.messages.get_mut(index) {
-            content.push_str(token);
-            if self.chat_scroll > 0 {
-                self.has_new_messages = true;
-            }
+        // No assistant message found, create one
+        self.messages
+            .push(ChatMessage::Assistant(token.to_string()));
+        if self.chat_scroll > 0 {
+            self.has_new_messages = true;
         }
     }
 
     /// Removes any in-progress streaming assistant message.
+    /// Note: This is deprecated in favor of per-request tracking.
     pub fn clear_streaming_assistant(&mut self) {
-        if let Some(index) = self.streaming_assistant_index.take() {
-            if index < self.messages.len() {
-                self.messages.remove(index);
+        // No-op for now, streaming is handled per-request
+    }
+
+    /// Adds a new pending request to track.
+    #[allow(dead_code)] // Used in Phase 3 (mod.rs updates)
+    pub fn add_pending_request(
+        &mut self,
+        id: crate::tui::orchestrator_actor::RequestId,
+        input: String,
+    ) {
+        let view = PendingRequestView {
+            id,
+            input,
+            phase: crate::tui::orchestrator_actor::OperationPhase::Queued,
+            queued_at: std::time::Instant::now(),
+            started_at: None,
+            position: None,
+            streaming_content: String::new(),
+            status: RequestStatus::Queued,
+        };
+
+        self.pending_requests.insert(id, view);
+        self.pending_order.push(id);
+    }
+
+    /// Updates the phase of a pending request.
+    #[allow(dead_code)] // Used in Phase 3 (mod.rs updates)
+    pub fn update_request_phase(
+        &mut self,
+        id: crate::tui::orchestrator_actor::RequestId,
+        phase: crate::tui::orchestrator_actor::OperationPhase,
+    ) {
+        if let Some(req) = self.pending_requests.get_mut(&id) {
+            req.phase = phase;
+            if req.started_at.is_none()
+                && phase != crate::tui::orchestrator_actor::OperationPhase::Queued
+            {
+                req.started_at = Some(std::time::Instant::now());
             }
         }
+    }
+
+    /// Appends streaming content to a specific request.
+    #[allow(dead_code)] // Used in Phase 3 (mod.rs updates)
+    pub fn append_streaming_to_request(
+        &mut self,
+        id: crate::tui::orchestrator_actor::RequestId,
+        token: &str,
+    ) {
+        if let Some(req) = self.pending_requests.get_mut(&id) {
+            req.streaming_content.push_str(token);
+            req.status = RequestStatus::Streaming;
+        }
+    }
+
+    /// Completes a pending request and removes it from tracking.
+    #[allow(dead_code)] // Used in Phase 3 (mod.rs updates)
+    pub fn complete_request(&mut self, id: crate::tui::orchestrator_actor::RequestId) {
+        self.pending_requests.remove(&id);
+        self.pending_order.retain(|rid| *rid != id);
+    }
+
+    /// Marks a request as cancelled.
+    #[allow(dead_code)] // Used in Phase 3 (mod.rs updates)
+    pub fn cancel_request(&mut self, id: crate::tui::orchestrator_actor::RequestId) {
+        if let Some(req) = self.pending_requests.get_mut(&id) {
+            req.status = RequestStatus::Cancelled;
+        }
+    }
+
+    /// Updates queue state from orchestrator.
+    #[allow(dead_code)] // Used in Phase 3 (mod.rs updates)
+    pub fn update_queue_state(
+        &mut self,
+        depth: usize,
+        max: usize,
+        positions: Vec<(crate::tui::orchestrator_actor::RequestId, usize)>,
+    ) {
+        self.queue_depth = depth;
+        self.queue_max = max;
+
+        for (id, position) in positions {
+            if let Some(req) = self.pending_requests.get_mut(&id) {
+                req.position = Some(position);
+            }
+        }
+    }
+
+    /// Returns true if the queue is full.
+    #[allow(dead_code)] // Used in Phase 5 (input states)
+    pub fn is_queue_full(&self) -> bool {
+        self.queue_depth >= self.queue_max
     }
 
     /// Resets all transient state when switching connections.
@@ -656,7 +783,8 @@ impl App {
         self.messages.clear();
         self.chat_scroll = 0;
         self.has_new_messages = false;
-        self.streaming_assistant_index = None;
+        self.pending_requests.clear();
+        self.pending_order.clear();
 
         // Clear query log and selection
         self.query_log.clear();
