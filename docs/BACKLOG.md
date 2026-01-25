@@ -129,6 +129,24 @@ See `docs/specs/v0.2e.md` for detailed specification.
 
 ## UX Improvements
 
+### Per-Message Inline Spinners
+
+**Status**: Deferred from v0.2a
+**Effort**: Medium
+**Value**: Medium (visual feedback improvement)
+
+Replace global spinner with per-message inline status indicators:
+
+- **Inline spinner after SQL** - Show spinner next to the user's SQL query while executing
+- **Thinking indicator** - Display "thinking..." while LLM processes query
+- **Streaming replacement** - Replace thinking indicator with streaming response text
+- **Per-message placeholders** - Add message-level status in `src/tui/app.rs`
+- **Chat rendering** - Render status inline in `src/tui/widgets/chat.rs`
+
+**Rationale**: Current global spinner in header works but doesn't show which specific operation is in progress when multiple requests are queued. Per-message indicators provide clearer visual feedback.
+
+**Deferred Reason**: Core v0.2a functionality complete. This is a nice-to-have visual enhancement that doesn't block other features.
+
 ### Interactive Command Input (Form Mode)
 
 **Status**: Idea
