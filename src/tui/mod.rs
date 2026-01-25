@@ -338,6 +338,8 @@ impl Tui {
         loop {
             // Clear expired toast notifications
             app_state.clear_expired_toast();
+            // Clear expired result highlights
+            app_state.clear_expired_highlight();
 
             // Ring terminal bell if requested (for long query notification)
             if app_state.take_bell_request() {
@@ -609,6 +611,9 @@ impl Tui {
 
                 match result {
                     InputResult::Messages(messages, log_entry) => {
+                        // Successful message completion means connection is healthy
+                        app_state.is_connected = true;
+
                         for m in messages {
                             app_state.add_message(m);
                         }
@@ -682,6 +687,9 @@ impl Tui {
                 app_state.spinner = None;
                 app_state.clear_streaming_assistant();
 
+                // Successful query means connection is healthy
+                app_state.is_connected = true;
+
                 for m in messages {
                     app_state.add_message(m);
                 }
@@ -699,6 +707,16 @@ impl Tui {
 
                 // Complete the pending request
                 app_state.complete_request(id);
+
+                // Check if error indicates connection issue
+                let error_lower = error.to_lowercase();
+                if error_lower.contains("connection")
+                    || error_lower.contains("timeout")
+                    || error_lower.contains("network")
+                    || error_lower.contains("unreachable")
+                {
+                    app_state.is_connected = false;
+                }
 
                 app_state.add_message(app::ChatMessage::Error(error));
             }

@@ -26,6 +26,7 @@ pub struct ChatPanel<'a> {
     text_selection: Option<&'a TextSelection>,
     spinner: Option<&'a Spinner>,
     show_row_numbers: bool,
+    highlight_index: Option<usize>,
 }
 
 impl<'a> ChatPanel<'a> {
@@ -43,6 +44,7 @@ impl<'a> ChatPanel<'a> {
         text_selection: Option<&'a TextSelection>,
         spinner: Option<&'a Spinner>,
         show_row_numbers: bool,
+        highlight_index: Option<usize>,
     ) -> Self {
         Self {
             messages,
@@ -53,6 +55,7 @@ impl<'a> ChatPanel<'a> {
             text_selection,
             spinner,
             show_row_numbers,
+            highlight_index,
         }
     }
 
@@ -101,11 +104,13 @@ impl<'a> ChatPanel<'a> {
     fn render_messages(&self, available_width: usize) -> Vec<Line<'a>> {
         let mut lines = Vec::new();
 
-        for message in self.messages {
+        for (idx, message) in self.messages.iter().enumerate() {
             // Add spacing between messages
             if !lines.is_empty() {
                 lines.push(Line::from(""));
             }
+
+            let is_highlighted = self.highlight_index == Some(idx);
 
             match message {
                 ChatMessage::User(text) => {
@@ -115,7 +120,7 @@ impl<'a> ChatPanel<'a> {
                     lines.extend(self.render_assistant_message(text, available_width));
                 }
                 ChatMessage::Result(result) => {
-                    lines.extend(self.render_result_message(result, available_width));
+                    lines.extend(self.render_result_message(result, available_width, is_highlighted));
                 }
                 ChatMessage::Error(text) => {
                     lines.extend(self.render_error_message(text, available_width));
@@ -273,8 +278,11 @@ impl<'a> ChatPanel<'a> {
         &self,
         result: &crate::db::QueryResult,
         available_width: usize,
+        is_highlighted: bool,
     ) -> Vec<Line<'a>> {
-        let table = ResultTable::new(result).show_row_numbers(self.show_row_numbers);
+        let table = ResultTable::new(result)
+            .show_row_numbers(self.show_row_numbers)
+            .highlighted(is_highlighted);
         // Convert the owned lines to static lifetime by collecting into owned data
         table
             .render_to_lines(available_width.saturating_sub(2))

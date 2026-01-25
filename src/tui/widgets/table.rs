@@ -22,6 +22,7 @@ const MIN_COLUMN_WIDTH: usize = 4;
 pub struct ResultTable<'a> {
     result: &'a QueryResult,
     show_row_numbers: bool,
+    highlighted: bool,
 }
 
 impl<'a> ResultTable<'a> {
@@ -30,12 +31,19 @@ impl<'a> ResultTable<'a> {
         Self {
             result,
             show_row_numbers: false,
+            highlighted: false,
         }
     }
 
     /// Sets whether to show row numbers.
     pub fn show_row_numbers(mut self, show: bool) -> Self {
         self.show_row_numbers = show;
+        self
+    }
+
+    /// Sets whether this table should be highlighted.
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
         self
     }
 
@@ -177,35 +185,54 @@ impl<'a> ResultTable<'a> {
 
         border.push(right);
 
-        Line::from(Span::styled(border, Style::default().fg(Color::DarkGray)))
+        let mut style = Style::default().fg(Color::DarkGray);
+        if self.highlighted {
+            style = style.bg(Color::Rgb(40, 40, 0));
+        }
+        Line::from(Span::styled(border, style))
     }
 
     /// Renders the header row with column names.
     fn render_header_row(&self, widths: &[usize]) -> Line<'a> {
         let mut spans = Vec::new();
+
+        let highlight_bg = if self.highlighted {
+            Some(Color::Rgb(40, 40, 0))
+        } else {
+            None
+        };
+
         // Add header for row number column (matches "{:>3} " format in data rows) if enabled
         if self.show_row_numbers {
-            spans.push(Span::styled(
-                "  # ",
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            ));
+            let mut style = Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD);
+            if let Some(bg) = highlight_bg {
+                style = style.bg(bg);
+            }
+            spans.push(Span::styled("  # ", style));
         }
-        spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
+
+        let mut border_style = Style::default().fg(Color::DarkGray);
+        if let Some(bg) = highlight_bg {
+            border_style = border_style.bg(bg);
+        }
+        spans.push(Span::styled("│", border_style));
 
         for (i, col) in self.result.columns.iter().enumerate() {
             let width = widths.get(i).copied().unwrap_or(MIN_COLUMN_WIDTH);
             let name = Self::truncate(&Self::header_text(col), width);
             let padded = format!(" {:width$} ", name, width = width);
 
-            spans.push(Span::styled(
-                padded,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
+            let mut style = Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD);
+            if let Some(bg) = highlight_bg {
+                style = style.bg(bg);
+            }
+
+            spans.push(Span::styled(padded, style));
+            spans.push(Span::styled("│", border_style));
         }
 
         Line::from(spans)
@@ -215,16 +242,28 @@ impl<'a> ResultTable<'a> {
     fn render_data_row(&self, row_num: usize, row: &[Value], widths: &[usize]) -> Line<'a> {
         let mut spans = Vec::new();
 
+        // Highlight background color if table is highlighted
+        let highlight_bg = if self.highlighted {
+            Some(Color::Rgb(40, 40, 0)) // Subtle yellow highlight
+        } else {
+            None
+        };
+
         // Row number prefix (dimmed) if enabled
         if self.show_row_numbers {
             let row_num_str = format!("{:>3} ", row_num);
-            spans.push(Span::styled(
-                row_num_str,
-                Style::default().fg(Color::DarkGray),
-            ));
+            let mut style = Style::default().fg(Color::DarkGray);
+            if let Some(bg) = highlight_bg {
+                style = style.bg(bg);
+            }
+            spans.push(Span::styled(row_num_str, style));
         }
 
-        spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
+        let mut border_style = Style::default().fg(Color::DarkGray);
+        if let Some(bg) = highlight_bg {
+            border_style = border_style.bg(bg);
+        }
+        spans.push(Span::styled("│", border_style));
 
         for (i, value) in row.iter().enumerate() {
             let width = widths.get(i).copied().unwrap_or(MIN_COLUMN_WIDTH);
@@ -232,16 +271,19 @@ impl<'a> ResultTable<'a> {
             let truncated = Self::truncate(&display, width);
             let padded = format!(" {:width$} ", truncated, width = width);
 
-            let style = if value.is_null() {
+            let mut style = if value.is_null() {
                 Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::ITALIC)
             } else {
                 Style::default()
             };
+            if let Some(bg) = highlight_bg {
+                style = style.bg(bg);
+            }
 
             spans.push(Span::styled(padded, style));
-            spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled("│", border_style));
         }
 
         Line::from(spans)

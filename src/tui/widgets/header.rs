@@ -78,21 +78,18 @@ impl Widget for Header<'_> {
 
         // Add connection info
         if let Some(info) = self.connection_info {
-            let status_dot = if self.is_connected { "●" } else { "○" };
-            let status_color = if self.is_connected {
-                Color::Green
+            // Connection status dot and text
+            let (status_dot, status_text, status_color) = if self.is_connected {
+                ("●", "connected", Color::Green)
             } else {
-                Color::Gray
+                ("○", "disconnected", Color::Red)
             };
+            let status_style = Style::default().bg(Color::Blue).fg(status_color);
 
-            right_spans.push(Span::styled(
-                " ",
-                Style::default().bg(Color::Blue).fg(Color::White),
-            ));
-            right_spans.push(Span::styled(
-                status_dot,
-                Style::default().bg(Color::Blue).fg(status_color),
-            ));
+            right_spans.push(Span::styled(" ", Style::default().bg(Color::Blue).fg(Color::White)));
+            right_spans.push(Span::styled(status_dot, status_style));
+            right_spans.push(Span::styled(" ", Style::default().bg(Color::Blue).fg(Color::White)));
+            right_spans.push(Span::styled(status_text, status_style));
             right_spans.push(Span::styled(
                 format!(" [db: {}] ", info),
                 Style::default().bg(Color::Blue).fg(Color::White),

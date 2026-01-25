@@ -392,6 +392,10 @@ pub struct App {
     pub queue_depth: usize,
     /// Maximum queue depth.
     pub queue_max: usize,
+    /// Index of the assistant message currently receiving streamed tokens.
+    streaming_assistant_index: Option<usize>,
+    /// Index of the result message to highlight and expiry time.
+    pub result_highlight: Option<(usize, Instant)>,
 }
 
 /// A multi-line paste that may need user confirmation.
@@ -499,6 +503,8 @@ impl App {
             pending_order: Vec::new(),
             queue_depth: 0,
             queue_max: crate::tui::orchestrator_actor::MAX_QUEUE_DEPTH,
+            streaming_assistant_index: None,
+            result_highlight: None,
         }
     }
 
@@ -578,6 +584,15 @@ impl App {
         }
     }
 
+    /// Clears expired result highlights.
+    pub fn clear_expired_highlight(&mut self) {
+        if let Some((_, expiry)) = self.result_highlight {
+            if Instant::now() > expiry {
+                self.result_highlight = None;
+            }
+        }
+    }
+
     /// Toggles vim mode on/off.
     pub fn toggle_vim_mode(&mut self) {
         self.vim_mode_enabled = !self.vim_mode_enabled;
@@ -631,6 +646,14 @@ impl App {
 
     /// Adds a message to the chat.
     pub fn add_message(&mut self, message: ChatMessage) {
+        let index = self.messages.len();
+
+        // If this is a result message, highlight it briefly
+        if matches!(message, ChatMessage::Result(_)) {
+            let expiry = Instant::now() + Duration::from_millis(200);
+            self.result_highlight = Some((index, expiry));
+        }
+
         self.messages.push(message);
         // If user has scrolled up, mark that there are new messages
         if self.chat_scroll > 0 {
@@ -648,6 +671,8 @@ impl App {
         // Clear per-request tracking
         self.pending_requests.clear();
         self.pending_order.clear();
+        self.streaming_assistant_index = None;
+        self.result_highlight = None;
     }
 
     /// Appends a streaming token to the active assistant message.

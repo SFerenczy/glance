@@ -124,6 +124,7 @@ fn render_chat(frame: &mut Frame, area: Rect, app: &mut App) {
         .filter_map(|id| app.pending_requests.get(id).map(|req| (*id, req)))
         .collect();
 
+    let highlight_index = app.result_highlight.map(|(idx, _)| idx);
     let widget = chat::ChatPanel::new(
         &app.messages,
         &pending,
@@ -133,6 +134,7 @@ fn render_chat(frame: &mut Frame, area: Rect, app: &mut App) {
         app.text_selection.as_ref(),
         app.spinner.as_ref(),
         app.show_row_numbers,
+        highlight_index,
     );
     frame.render_widget(widget, area);
 
