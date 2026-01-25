@@ -33,6 +33,7 @@
 4. **Explicit over clever** — Code should be obvious and traceable
 5. **Composition over inheritance** — Use traits and composition, not complex hierarchies
 6. **AI-first** — Consistent naming, one concept per file, shallow nesting, searchable code
+7. **Robust over expedient** — Prefer solid foundations to quick workarounds. Coding effort is cheap with AI; code quality is precious. Don't store passwords in plaintext just because "it works for now."
 
 These align with our [architectural goals](docs/ARCHITECTURE.md#architectural-principles).
 
@@ -91,6 +92,19 @@ What needs clarification before planning?
 ```
 
 3. **Gate the transition**: Don't move to planning until the spec is reviewed and approved. *"Now that the spec is approved, create an implementation plan."*
+
+### Planning Requires Investigation
+
+Before writing a plan, **explore the codebase**. A plan written without investigation will propose solutions that conflict with existing patterns or duplicate existing functionality.
+
+1. **Find similar implementations**: Search for how related features are built
+2. **Understand current patterns**: Read the modules you'll touch to learn their conventions
+3. **Identify integration points**: Know what interfaces exist and how components connect
+4. **Check for reusable code**: Don't reinvent what already exists
+
+Only after investigation can you write a plan that fits the codebase.
+
+**Note for AI agents:** Do not use "plan mode" or similar built-in planning features. Instead, write your plan directly to `plan.md` in the project root.
 
 ### Phase Workflow
 
