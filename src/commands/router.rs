@@ -371,9 +371,7 @@ impl CommandRouter {
         let extras = if extras_map.is_empty() {
             None
         } else {
-            Some(serde_json::Value::Object(
-                extras_map.into_iter().map(|(k, v)| (k, v)).collect(),
-            ))
+            Some(serde_json::Value::Object(extras_map.into_iter().collect()))
         };
 
         Command::ConnectionAdd(ConnectionAddArgs {
@@ -450,9 +448,7 @@ impl CommandRouter {
         let extras = if extras_map.is_empty() {
             None
         } else {
-            Some(serde_json::Value::Object(
-                extras_map.into_iter().map(|(k, v)| (k, v)).collect(),
-            ))
+            Some(serde_json::Value::Object(extras_map.into_iter().collect()))
         };
 
         Command::ConnectionEdit(ConnectionEditArgs {
@@ -513,7 +509,7 @@ impl CommandRouter {
                     "conn" => history_args.connection = Some(value.clone()),
                     "text" => history_args.text = Some(value.clone()),
                     "limit" => history_args.limit = value.parse().ok(),
-                    "since" => history_args.since_days = parse_duration_to_days(&value),
+                    "since" => history_args.since_days = parse_duration_to_days(value),
                     _ => {}
                 },
                 _ => {}

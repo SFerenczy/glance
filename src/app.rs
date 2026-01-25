@@ -87,6 +87,7 @@ pub enum InputResult {
         /// Optional message to display.
         message: Option<ChatMessage>,
         /// Optional saved query ID to track for history.
+        #[allow(dead_code)] // Will be used for tracking query usage in history
         saved_query_id: Option<i64>,
     },
 }

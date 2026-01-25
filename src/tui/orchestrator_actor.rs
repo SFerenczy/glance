@@ -63,6 +63,7 @@ pub enum RequestType {
 
 /// Represents which phase of operation a request is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Variants will be used as implementation progresses
 pub enum OperationPhase {
     Queued,
     LlmRequesting,
@@ -149,6 +150,7 @@ pub enum OrchestratorResponse {
         id: RequestId,
         phase: OperationPhase,
         elapsed: Duration,
+        #[allow(dead_code)] // Will be used for detailed progress messages
         detail: Option<String>,
     },
     /// Operation completed successfully.
@@ -176,9 +178,11 @@ pub enum OrchestratorResponse {
     /// Queue status changed.
     QueueUpdate {
         queue_depth: usize,
+        #[allow(dead_code)] // Will be used by UI to show queue limit
         max_depth: usize,
         #[allow(dead_code)]
         current: Option<RequestId>,
+        #[allow(dead_code)] // Will be used by UI to show request positions
         positions: Vec<(RequestId, usize)>,
     },
     /// Queue is full, request rejected.
@@ -374,6 +378,7 @@ impl OrchestratorActor {
                 let _ = self.progress_tx.send(ProgressMessage::LlmComplete(String::new())).await;
                 match result {
                     Ok(InputResult::NeedsConfirmation { sql, classification }) => {
+                        self.awaiting_confirmation = true; // Pause queue
                         let _ = self.response_tx.send(OrchestratorResponse::NeedsConfirmation {
                             id,
                             sql,
@@ -453,6 +458,9 @@ impl OrchestratorActor {
         if let Some(token) = self.current_cancel.take() {
             token.cancel();
         }
+        if let Some(in_flight) = self.in_flight.take() {
+            in_flight.task.abort(); // Immediately abort the task
+        }
     }
 
     /// Cancels a specific queued request by ID.
@@ -503,78 +511,35 @@ impl OrchestratorActor {
 
     /// Runs the actor loop, processing commands until Shutdown is received.
     pub async fn run(mut self) {
+        let mut progress_ticker = tokio::time::interval(Duration::from_millis(100));
+
         loop {
-            // Process queue when idle (before waiting for commands)
-            if self.current.is_none() && !self.queue.is_empty() {
-                self.process_next().await;
-                continue;
-            }
+            tokio::select! {
+                biased;
 
-            // Wait for next command
-            let Some(cmd) = self.receiver.recv().await else {
-                // Channel closed, exit
-                break;
-            };
-
-            match cmd {
-                OrchestratorCommand::ProcessInput { id, input, cancel } => {
-                    let request = PendingRequest {
-                        id,
-                        input,
-                        request_type: RequestType::NaturalLanguage,
-                        queued_at: Instant::now(),
-                        cancel,
-                    };
-                    self.enqueue(request).await;
+                // Commands have priority for responsiveness
+                Some(cmd) = self.receiver.recv() => {
+                    if self.handle_command(cmd).await {
+                        break;
+                    }
                 }
 
-                OrchestratorCommand::ExecuteSql { id, sql, cancel } => {
-                    let request = PendingRequest {
-                        id,
-                        input: sql,
-                        request_type: RequestType::RawSql,
-                        queued_at: Instant::now(),
-                        cancel,
-                    };
-                    self.enqueue(request).await;
+                // Progress updates every 100ms
+                _ = progress_ticker.tick() => {
+                    if let Some(ref req) = self.in_flight {
+                        let elapsed = req.started_at.elapsed();
+                        let _ = self.response_tx.send(OrchestratorResponse::Progress {
+                            id: req.id,
+                            phase: req.phase,
+                            elapsed,
+                            detail: None,
+                        }).await;
+                    }
                 }
 
-                OrchestratorCommand::ConfirmQuery { id, sql, cancel } => {
-                    let request = PendingRequest {
-                        id,
-                        input: sql,
-                        request_type: RequestType::Confirmation,
-                        queued_at: Instant::now(),
-                        cancel,
-                    };
-                    self.enqueue(request).await;
-                }
-
-                OrchestratorCommand::CancelCurrent => {
-                    self.cancel_current();
-                }
-
-                OrchestratorCommand::CancelRequest(id) => {
-                    self.cancel_request(id).await;
-                }
-
-                OrchestratorCommand::CancelAll => {
-                    self.cancel_all().await;
-                }
-
-                OrchestratorCommand::CancelPendingQuery { sql } => {
-                    let (msg, log_entry) = self.orchestrator.cancel_query(sql.as_deref()).await;
-                    let _ = self
-                        .response_tx
-                        .send(OrchestratorResponse::PendingQueryCancelled {
-                            message: msg,
-                            log_entry,
-                        })
-                        .await;
-                }
-
-                OrchestratorCommand::Shutdown => {
-                    break;
+                // Process next queued request when idle
+                _ = async {}, if self.in_flight.is_none() && !self.queue.is_empty() && !self.awaiting_confirmation => {
+                    self.process_next().await;
                 }
             }
         }
@@ -586,6 +551,74 @@ impl OrchestratorActor {
         if let Err(e) = self.orchestrator.close().await {
             warn!("Error closing orchestrator: {}", e);
         }
+    }
+
+    /// Handles a command. Returns true if should exit.
+    async fn handle_command(&mut self, cmd: OrchestratorCommand) -> bool {
+        match cmd {
+            OrchestratorCommand::ProcessInput { id, input, cancel } => {
+                let request = PendingRequest {
+                    id,
+                    input,
+                    request_type: RequestType::NaturalLanguage,
+                    queued_at: Instant::now(),
+                    cancel,
+                };
+                self.enqueue(request).await;
+            }
+
+            OrchestratorCommand::ExecuteSql { id, sql, cancel } => {
+                let request = PendingRequest {
+                    id,
+                    input: sql,
+                    request_type: RequestType::RawSql,
+                    queued_at: Instant::now(),
+                    cancel,
+                };
+                self.enqueue(request).await;
+            }
+
+            OrchestratorCommand::ConfirmQuery { id, sql, cancel } => {
+                self.awaiting_confirmation = false; // Resume queue
+                let request = PendingRequest {
+                    id,
+                    input: sql,
+                    request_type: RequestType::Confirmation,
+                    queued_at: Instant::now(),
+                    cancel,
+                };
+                self.enqueue(request).await;
+            }
+
+            OrchestratorCommand::CancelCurrent => {
+                self.cancel_current();
+            }
+
+            OrchestratorCommand::CancelRequest(id) => {
+                self.cancel_request(id).await;
+            }
+
+            OrchestratorCommand::CancelAll => {
+                self.cancel_all().await;
+            }
+
+            OrchestratorCommand::CancelPendingQuery { sql } => {
+                self.awaiting_confirmation = false; // Resume queue
+                let (msg, log_entry) = self.orchestrator.cancel_query(sql.as_deref()).await;
+                let _ = self
+                    .response_tx
+                    .send(OrchestratorResponse::PendingQueryCancelled {
+                        message: msg,
+                        log_entry,
+                    })
+                    .await;
+            }
+
+            OrchestratorCommand::Shutdown => {
+                return true;
+            }
+        }
+        false
     }
 
     /// Returns elapsed time since a request was queued.
