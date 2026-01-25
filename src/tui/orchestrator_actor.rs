@@ -317,35 +317,41 @@ impl OrchestratorActor {
             return;
         }
 
-        self.current = Some(request.id);
+        let id = request.id;
+        let started_at = Instant::now();
+
+        self.current = Some(id);
         self.current_cancel = Some(request.cancel.clone());
 
         let _ = self
             .response_tx
             .send(OrchestratorResponse::Started {
-                id: request.id,
+                id,
                 phase: OperationPhase::Processing,
             })
             .await;
         self.send_queue_update().await;
 
+        // Process request inline (background spawning will be added in future iteration)
         match request.request_type {
             RequestType::NaturalLanguage => {
-                self.process_input(request.id, &request.input, request.cancel)
-                    .await;
+                self.process_input(id, &request.input, request.cancel).await;
             }
             RequestType::RawSql => {
-                self.process_sql(request.id, &request.input, request.cancel)
-                    .await;
+                self.process_sql(id, &request.input, request.cancel).await;
             }
             RequestType::Confirmation => {
-                self.process_confirmation(request.id, &request.input, request.cancel)
+                self.process_confirmation(id, &request.input, request.cancel)
                     .await;
             }
         }
 
+        // Track processing time
+        let _elapsed = started_at.elapsed();
+
         self.current = None;
         self.current_cancel = None;
+        self.in_flight = None;
         self.send_queue_update().await;
     }
 
