@@ -460,6 +460,10 @@ impl Tui {
 
                         // Submit to orchestrator queue
                         let id = RequestId::new();
+
+                        // Add pending request placeholder
+                        app_state.add_pending_request(id, input.clone());
+
                         let token = CancellationToken::new();
                         self.pending_cancellations.insert(id, token.clone());
                         let _ = handle.process_input(id, input, token).await;
@@ -527,6 +531,7 @@ impl Tui {
             }
             OrchestratorResponse::Started { id, phase } => {
                 // Request started processing
+                app_state.update_request_phase(id, phase);
                 tracing::debug!("Request {} started (phase: {:?})", id, phase);
             }
             OrchestratorResponse::Progress {
@@ -536,6 +541,7 @@ impl Tui {
                 detail: _,
             } => {
                 // Progress update for a running request
+                app_state.update_request_phase(id, phase);
                 tracing::debug!("Request {} progress: {:?} ({:?})", id, phase, elapsed);
             }
             OrchestratorResponse::Completed { id, result } => {
@@ -543,6 +549,9 @@ impl Tui {
                 self.pending_cancellations.remove(&id);
                 app_state.is_processing = self.has_pending_requests();
                 app_state.clear_streaming_assistant();
+
+                // Complete the pending request
+                app_state.complete_request(id);
 
                 match result {
                     InputResult::Messages(messages, log_entry) => {
@@ -634,6 +643,9 @@ impl Tui {
                 app_state.spinner = None;
                 app_state.clear_streaming_assistant();
 
+                // Complete the pending request
+                app_state.complete_request(id);
+
                 app_state.add_message(app::ChatMessage::Error(error));
             }
             OrchestratorResponse::Cancelled { id, log_entry } => {
@@ -642,6 +654,10 @@ impl Tui {
                 app_state.is_processing = self.has_pending_requests();
                 app_state.spinner = None;
                 app_state.clear_streaming_assistant();
+
+                // Mark request as cancelled, then complete it
+                app_state.cancel_request(id);
+                app_state.complete_request(id);
 
                 app_state.add_message(app::ChatMessage::System("Operation cancelled.".to_string()));
                 if let Some(entry) = log_entry {
@@ -664,12 +680,12 @@ impl Tui {
             }
             OrchestratorResponse::QueueUpdate {
                 queue_depth,
-                max_depth: _,
+                max_depth,
                 current: _,
-                positions: _,
+                positions,
             } => {
                 self.queue_depth = queue_depth;
-                // Could update UI to show queue depth
+                app_state.update_queue_state(queue_depth, max_depth, positions);
             }
             OrchestratorResponse::QueueFull { id } => {
                 // Remove from pending cancellations since it wasn't queued
