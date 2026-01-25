@@ -86,6 +86,8 @@ pub enum InputResult {
         content: String,
         /// Optional message to display.
         message: Option<ChatMessage>,
+        /// Optional saved query ID to track for history.
+        saved_query_id: Option<i64>,
     },
 }
 
@@ -105,6 +107,8 @@ pub struct Orchestrator {
     current_connection_name: Option<String>,
     /// Last executed SQL (for /savequery).
     last_executed_sql: Option<String>,
+    /// Saved query ID for the next query execution (set by /usequery).
+    pending_saved_query_id: Option<i64>,
 }
 
 impl Orchestrator {
@@ -123,6 +127,7 @@ impl Orchestrator {
             state_db: None,
             current_connection_name: None,
             last_executed_sql: None,
+            pending_saved_query_id: None,
         }
     }
 
@@ -153,14 +158,45 @@ impl Orchestrator {
         let llm =
             crate::llm::create_client_from_persistence(llm_provider, state_db.as_ref()).await?;
 
+        // Ensure a default connection exists for history tracking
+        let current_connection_name = if let Some(ref db_state) = state_db {
+            let default_name = "__default__";
+            let db_name = connection.database.as_deref().unwrap_or("unknown");
+
+            // Create or update the default connection entry
+            let backend_str = match connection.backend {
+                crate::db::DatabaseBackend::Postgres => "postgres",
+            };
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO connections (name, database, backend, host, port)
+                VALUES (?, ?, ?, NULL, 0)
+                ON CONFLICT(name) DO UPDATE SET
+                    database = excluded.database,
+                    backend = excluded.backend,
+                    last_used_at = datetime('now')
+                "#,
+            )
+            .bind(default_name)
+            .bind(db_name)
+            .bind(backend_str)
+            .execute(db_state.pool())
+            .await;
+
+            Some(default_name.to_string())
+        } else {
+            None
+        };
+
         Ok(Self {
             db: Some(db),
             llm_service: LlmService::new(llm),
             schema,
             conversation: Conversation::new(),
             state_db,
-            current_connection_name: None,
+            current_connection_name,
             last_executed_sql: None,
+            pending_saved_query_id: None,
         })
     }
 
@@ -175,6 +211,7 @@ impl Orchestrator {
             current_connection_name: None,
             last_executed_sql: None,
             conversation: Conversation::new(),
+            pending_saved_query_id: None,
         }
     }
 
@@ -193,6 +230,7 @@ impl Orchestrator {
             current_connection_name: Some("test".to_string()),
             last_executed_sql: None,
             conversation: Conversation::new(),
+            pending_saved_query_id: None,
         }
     }
 
@@ -255,6 +293,7 @@ impl Orchestrator {
             current_connection_name: Some("test".to_string()),
             last_executed_sql: None,
             conversation: Conversation::new(),
+            pending_saved_query_id: None,
         }
     }
 
@@ -352,7 +391,7 @@ impl Orchestrator {
                 connection::handle_conn_delete(&args, &state_db).await
             }
             Command::History(args) => history::handle_history(&ctx, &args).await,
-            Command::HistoryClear { .. } => history::handle_history_clear(&ctx).await,
+            Command::HistoryClear { confirmed } => history::handle_history_clear(&ctx, confirmed).await,
             Command::SaveQuery(args) => {
                 let state_db = require_state_db!(self);
                 queries::handle_savequery(&ctx, &args, &state_db).await
@@ -363,10 +402,10 @@ impl Orchestrator {
                 queries::handle_usequery(&name, self.current_connection_name.as_deref(), &state_db)
                     .await
             }
-            Command::QueryDelete(name) => {
+            Command::QueryDelete(args) => {
                 let state_db = require_state_db!(self);
                 queries::handle_query_delete(
-                    &name,
+                    &args,
                     self.current_connection_name.as_deref(),
                     &state_db,
                 )
@@ -394,6 +433,15 @@ impl Orchestrator {
             }
             Command::Unknown(cmd) => handle_unknown(&cmd),
         };
+
+        // Capture saved_query_id from SetInput results before converting
+        if let CommandResult::SetInput {
+            saved_query_id: Some(id),
+            ..
+        } = &result
+        {
+            self.pending_saved_query_id = Some(*id);
+        }
 
         Ok(self.command_result_to_input_result(result))
     }
@@ -424,9 +472,15 @@ impl Orchestrator {
             CommandResult::SchemaRefresh { messages, schema } => {
                 InputResult::SchemaRefresh { messages, schema }
             }
-            CommandResult::SetInput { content, message } => {
-                InputResult::SetInput { content, message }
-            }
+            CommandResult::SetInput {
+                content,
+                message,
+                saved_query_id,
+            } => InputResult::SetInput {
+                content,
+                message,
+                saved_query_id,
+            },
             CommandResult::None => InputResult::None,
         }
     }
@@ -852,9 +906,11 @@ impl Orchestrator {
                 Some(execution_time.as_millis() as i64),
                 row_count,
                 error_msg.as_deref(),
-                None,
+                self.pending_saved_query_id,
             )
             .await;
+            // Clear the pending saved query ID after use
+            self.pending_saved_query_id = None;
         }
 
         let entry = match &result {
@@ -1004,6 +1060,7 @@ impl Orchestrator {
         self.conversation.clear();
         self.current_connection_name = Some(args.to_string());
         self.last_executed_sql = None;
+        self.pending_saved_query_id = None;
 
         persistence::connections::touch_connection(state_db.pool(), args).await?;
 

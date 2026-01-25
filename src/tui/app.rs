@@ -416,7 +416,7 @@ pub struct PendingQuery {
 impl App {
     /// Creates a new App instance.
     pub fn new(connection: Option<&ConnectionConfig>) -> Self {
-        let connection_info = connection.map(|c| c.display_string());
+        let connection_info = connection.map(|c| c.display_string_redacted());
 
         // Add welcome message
         let messages = vec![ChatMessage::System(
@@ -639,6 +639,41 @@ impl App {
                 self.messages.remove(index);
             }
         }
+    }
+
+    /// Resets all transient state when switching connections.
+    ///
+    /// Clears chat messages, query log, input history, scroll positions,
+    /// pending confirmations, and other UI state that shouldn't persist
+    /// across connection switches.
+    pub fn reset_for_connection_switch(&mut self) {
+        // Clear chat and conversation state
+        self.messages.clear();
+        self.chat_scroll = 0;
+        self.has_new_messages = false;
+        self.streaming_assistant_index = None;
+
+        // Clear query log and selection
+        self.query_log.clear();
+        self.selected_query = None;
+        self.show_query_detail = false;
+
+        // Clear input history
+        self.input_history.clear();
+
+        // Clear pending operations and confirmations
+        self.pending_query = None;
+        self.pending_paste = None;
+        self.last_executed_sql = None;
+
+        // Clear transient UI state
+        self.spinner = None;
+        self.toast = None;
+        self.cancel_requested = false;
+        self.rerun_requested = false;
+
+        // Keep user preferences and current input text
+        // (vim_mode_enabled, show_row_numbers, input, focus, etc.)
     }
 
     /// Adds a query to the log.

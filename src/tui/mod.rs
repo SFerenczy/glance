@@ -553,6 +553,13 @@ impl Tui {
                         connection_info,
                         schema,
                     } => {
+                        // Cancel all pending operations before switching
+                        self.cancel_all_pending();
+
+                        // Reset all transient UI state
+                        app_state.reset_for_connection_switch();
+
+                        // Apply the new connection state
                         for m in messages {
                             app_state.add_message(m);
                         }
@@ -566,7 +573,11 @@ impl Tui {
                         }
                         app_state.schema = Some(schema);
                     }
-                    InputResult::SetInput { content, message } => {
+                    InputResult::SetInput {
+                        content,
+                        message,
+                        saved_query_id: _,
+                    } => {
                         app_state.input.text = content;
                         app_state.input.cursor = app_state.input.text.len();
                         if let Some(msg) = message {

@@ -103,6 +103,13 @@ impl InputHistory {
         self.draft.clear();
     }
 
+    /// Clears all history entries and resets state.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.position = None;
+        self.draft.clear();
+    }
+
     /// Returns the number of entries in history.
     #[allow(dead_code)]
     pub fn len(&self) -> usize {

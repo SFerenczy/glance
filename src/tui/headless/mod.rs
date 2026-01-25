@@ -343,6 +343,10 @@ impl HeadlessRunner {
                 connection_info,
                 schema,
             } => {
+                // Reset all transient UI state for new connection
+                self.app.reset_for_connection_switch();
+
+                // Apply the new connection state
                 for msg in messages {
                     self.app.add_message(msg);
                 }
@@ -356,7 +360,11 @@ impl HeadlessRunner {
                 }
                 self.app.schema = Some(schema);
             }
-            InputResult::SetInput { content, message } => {
+            InputResult::SetInput {
+                content,
+                message,
+                saved_query_id: _,
+            } => {
                 self.app.input.text = content;
                 self.app.input.cursor = self.app.input.text.len();
                 if let Some(msg) = message {

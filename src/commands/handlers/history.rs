@@ -58,13 +58,19 @@ pub async fn handle_history(ctx: &CommandContext<'_>, args: &HistoryArgs) -> Com
 }
 
 /// Handle /history clear command.
-pub async fn handle_history_clear(ctx: &CommandContext<'_>) -> CommandResult {
+pub async fn handle_history_clear(ctx: &CommandContext<'_>, confirmed: bool) -> CommandResult {
     let state_db = match ctx.state_db {
         Some(db) => db,
         None => {
             return CommandResult::error("State database not available.");
         }
     };
+
+    if !confirmed {
+        return CommandResult::system(
+            "This will delete all query history. Use '/history clear --confirm' to proceed.",
+        );
+    }
 
     match persistence::history::clear_history(state_db.pool()).await {
         Ok(count) => CommandResult::system(format!("Cleared {} history entries.", count)),

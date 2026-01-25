@@ -72,6 +72,8 @@ pub enum CommandResult {
         content: String,
         /// Optional message to display.
         message: Option<ChatMessage>,
+        /// Optional saved query ID to track for history.
+        saved_query_id: Option<i64>,
     },
     /// No action needed.
     None,

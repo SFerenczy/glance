@@ -312,9 +312,10 @@ impl OrchestratorActor {
                 let progress_tx = self.progress_tx.clone();
                 move |token| {
                     let progress_tx = progress_tx.clone();
+                    let token_owned = token.to_string();
                     async move {
                         let _ = progress_tx
-                            .send(ProgressMessage::LlmStreaming(token.to_string()))
+                            .send(ProgressMessage::LlmStreaming(token_owned))
                             .await;
                     }
                 }

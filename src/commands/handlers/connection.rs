@@ -29,10 +29,15 @@ pub async fn handle_connections_list(ctx: &CommandContext<'_>) -> CommandResult 
     let mut output = String::from("Saved connections:\n");
     for conn in &connections {
         let last_used = conn.last_used_at.as_deref().unwrap_or("never");
+        let user_display = conn
+            .redacted_username()
+            .map(|u| format!("{}@", u))
+            .unwrap_or_default();
         output.push_str(&format!(
-            "  • {} - {} @ {}:{} (last used: {})\n",
+            "  • {} - {} ({}{}:{}, last used: {})\n",
             conn.name,
             conn.database,
+            user_display,
             conn.redacted_host(),
             conn.port,
             last_used
@@ -183,7 +188,7 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
             user: args.user.clone(),
             password: args.password.clone(),
             sslmode: args.sslmode.clone(),
-            extras: None,
+            extras: args.extras.clone(),
         };
 
         match crate::db::connect(&test_config).await {
@@ -207,7 +212,7 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
         port,
         username: args.user.clone(),
         sslmode: args.sslmode.clone(),
-        extras: None,
+        extras: args.extras.clone(),
         password_storage: persistence::connections::PasswordStorage::None,
         created_at: String::new(),
         updated_at: String::new(),
@@ -259,13 +264,15 @@ pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>
         || args.database.is_some()
         || args.user.is_some()
         || args.password.is_some()
-        || args.sslmode.is_some();
+        || args.sslmode.is_some()
+        || args.extras.is_some();
 
-    if !has_updates {
+    if !has_updates && !args.test {
         return CommandResult::system(format!(
             "To edit connection '{}', use:\n\
-             /conn edit {} <field>=<value> ...\n\n\
-             Fields: backend, host, port, database, user, password, sslmode",
+             /conn edit {} <field>=<value> ... [--test]\n\n\
+             Fields: backend, host, port, database, user, password, sslmode, <custom_key>=<value>\n\
+             Flags: --test (test connection before saving)",
             args.name, args.name
         ));
     }
@@ -301,12 +308,49 @@ pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>
         port: args.port.unwrap_or(existing.port),
         username: args.user.clone().or(existing.username),
         sslmode: args.sslmode.clone().or(existing.sslmode),
-        extras: existing.extras,
+        extras: args.extras.clone().or(existing.extras),
         password_storage: existing.password_storage,
         created_at: existing.created_at,
         updated_at: String::new(),
         last_used_at: existing.last_used_at,
     };
+
+    // Test connection if --test flag is provided
+    if args.test {
+        let password = match persistence::connections::get_connection_password(
+            state_db.pool(),
+            &args.name,
+            state_db.secrets(),
+        )
+        .await
+        {
+            Ok(p) => p,
+            Err(e) => return CommandResult::error(e.to_string()),
+        };
+
+        let test_config = ConnectionConfig {
+            backend: updated_profile.backend,
+            host: updated_profile.host.clone(),
+            port: updated_profile.port,
+            database: Some(updated_profile.database.clone()),
+            user: updated_profile.username.clone(),
+            password: args.password.clone().or(password),
+            sslmode: updated_profile.sslmode.clone(),
+            extras: updated_profile.extras.clone(),
+        };
+
+        match crate::db::connect(&test_config).await {
+            Ok(db) => {
+                let _ = db.close().await;
+            }
+            Err(e) => {
+                return CommandResult::error(format!(
+                    "Connection test failed: {}. Connection not updated.",
+                    e
+                ));
+            }
+        }
+    }
 
     match persistence::connections::update_connection(
         state_db.pool(),
@@ -317,7 +361,12 @@ pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>
     .await
     {
         Ok(()) => {
-            let mut msg = format!("Connection '{}' updated.", args.name);
+            let test_msg = if args.test {
+                " (connection tested successfully)"
+            } else {
+                ""
+            };
+            let mut msg = format!("Connection '{}' updated{}.", args.name, test_msg);
 
             // Warn about plaintext password storage if keyring unavailable
             if args.password.is_some() && !state_db.secrets().is_secure() {

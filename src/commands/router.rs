@@ -4,6 +4,37 @@
 
 use super::tokenizer::{tokenize, Token};
 
+/// Parses a duration string like "7d", "12h", "15m" into days as a float.
+///
+/// Supports:
+/// - "Nd" for days (e.g., "7d" = 7.0 days)
+/// - "Nh" for hours (e.g., "12h" = 0.5 days)
+/// - "Nm" for minutes (e.g., "30m" ≈ 0.021 days)
+/// - Plain numbers are interpreted as days
+fn parse_duration_to_days(s: &str) -> Option<i64> {
+    let s = s.trim();
+
+    if let Ok(days) = s.parse::<i64>() {
+        // Plain number, interpret as days
+        return Some(days);
+    }
+
+    // Try to parse with suffix
+    if s.len() < 2 {
+        return None;
+    }
+
+    let (num_part, suffix) = s.split_at(s.len() - 1);
+    let num: f64 = num_part.parse().ok()?;
+
+    match suffix {
+        "d" | "D" => Some(num.ceil() as i64),
+        "h" | "H" => Some((num / 24.0).ceil() as i64),
+        "m" | "M" => Some((num / 1440.0).ceil() as i64), // 1440 minutes in a day
+        _ => None,
+    }
+}
+
 /// Arguments for connection add command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionAddArgs {
@@ -23,6 +54,8 @@ pub struct ConnectionAddArgs {
     pub password: Option<String>,
     /// SSL mode.
     pub sslmode: Option<String>,
+    /// Extra connection parameters as key-value pairs.
+    pub extras: Option<serde_json::Value>,
     /// Whether to test the connection before saving.
     pub test: bool,
 }
@@ -55,6 +88,10 @@ pub struct ConnectionEditArgs {
     pub password: Option<String>,
     /// SSL mode (if updating).
     pub sslmode: Option<String>,
+    /// Extra connection parameters (if updating).
+    pub extras: Option<serde_json::Value>,
+    /// Whether to test the connection after updating.
+    pub test: bool,
 }
 
 /// Arguments for history command.
@@ -68,6 +105,8 @@ pub struct HistoryArgs {
     pub limit: Option<i64>,
     /// Filter by days since.
     pub since_days: Option<i64>,
+    /// Whether clear operation is confirmed.
+    pub confirmed: bool,
 }
 
 /// Arguments for save query command.
@@ -75,6 +114,8 @@ pub struct HistoryArgs {
 pub struct SaveQueryArgs {
     /// Query name.
     pub name: String,
+    /// Optional description.
+    pub description: Option<String>,
     /// Tags for the query.
     pub tags: Vec<String>,
 }
@@ -90,6 +131,15 @@ pub struct QueriesListArgs {
     pub connection: Option<String>,
     /// Show all connections.
     pub all: bool,
+}
+
+/// Arguments for query delete command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryDeleteArgs {
+    /// Query name to delete.
+    pub name: String,
+    /// Whether deletion is confirmed.
+    pub confirmed: bool,
 }
 
 /// Arguments for LLM provider command.
@@ -157,7 +207,7 @@ pub enum Command {
     /// Load a saved query.
     UseQuery(String),
     /// Delete a saved query.
-    QueryDelete(String),
+    QueryDelete(QueryDeleteArgs),
     /// LLM provider command.
     LlmProvider(LlmProviderArgs),
     /// LLM model command.
@@ -249,6 +299,7 @@ impl CommandRouter {
                         user: None,
                         password: None,
                         sslmode: None,
+                        extras: None,
                         test: false,
                     });
                 }
@@ -265,6 +316,8 @@ impl CommandRouter {
                         user: None,
                         password: None,
                         sslmode: None,
+                        extras: None,
+                        test: false,
                     });
                 }
                 Self::parse_conn_edit_args(rest)
@@ -288,6 +341,8 @@ impl CommandRouter {
         let mut password = None;
         let mut sslmode = None;
         let mut test = false;
+        let mut extras_map: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
 
         let tokens = tokenize(args);
 
@@ -301,7 +356,10 @@ impl CommandRouter {
                     "user" => user = Some(value),
                     "password" | "pwd" => password = Some(value),
                     "sslmode" => sslmode = Some(value),
-                    _ => {}
+                    // Collect unknown key-value pairs as extras
+                    _ => {
+                        extras_map.insert(key, serde_json::Value::String(value));
+                    }
                 },
                 Token::LongFlag(flag) if flag == "test" => test = true,
                 Token::ShortFlag('t') => test = true,
@@ -309,6 +367,17 @@ impl CommandRouter {
                 _ => {}
             }
         }
+
+        let extras = if extras_map.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Object(
+                extras_map
+                    .into_iter()
+                    .map(|(k, v)| (k, v))
+                    .collect(),
+            ))
+        };
 
         Command::ConnectionAdd(ConnectionAddArgs {
             name,
@@ -319,6 +388,7 @@ impl CommandRouter {
             user,
             password,
             sslmode,
+            extras,
             test,
         })
     }
@@ -352,6 +422,9 @@ impl CommandRouter {
         let mut user = None;
         let mut password = None;
         let mut sslmode = None;
+        let mut test = false;
+        let mut extras_map: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
 
         let tokens = tokenize(args);
 
@@ -365,12 +438,28 @@ impl CommandRouter {
                     "user" => user = Some(value),
                     "password" | "pwd" => password = Some(value),
                     "sslmode" => sslmode = Some(value),
-                    _ => {}
+                    // Collect unknown key-value pairs as extras
+                    _ => {
+                        extras_map.insert(key, serde_json::Value::String(value));
+                    }
                 },
+                Token::LongFlag(flag) if flag == "test" => test = true,
+                Token::ShortFlag('t') => test = true,
                 Token::Word(word) if name.is_empty() => name = word,
                 _ => {}
             }
         }
+
+        let extras = if extras_map.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Object(
+                extras_map
+                    .into_iter()
+                    .map(|(k, v)| (k, v))
+                    .collect(),
+            ))
+        };
 
         Command::ConnectionEdit(ConnectionEditArgs {
             name,
@@ -381,6 +470,8 @@ impl CommandRouter {
             user,
             password,
             sslmode,
+            extras,
+            test,
         })
     }
 
@@ -428,7 +519,7 @@ impl CommandRouter {
                     "conn" => history_args.connection = Some(value.clone()),
                     "text" => history_args.text = Some(value.clone()),
                     "limit" => history_args.limit = value.parse().ok(),
-                    "since" => history_args.since_days = value.parse().ok(),
+                    "since" => history_args.since_days = parse_duration_to_days(&value),
                     _ => {}
                 },
                 _ => {}
@@ -441,17 +532,33 @@ impl CommandRouter {
     /// Parse /savequery command arguments.
     fn parse_savequery_command(args: &str) -> Command {
         let mut name = String::new();
+        let mut description = None;
         let mut tags = Vec::new();
+        let tokens = tokenize(args);
 
-        for part in args.split_whitespace() {
-            if part.starts_with('#') {
-                tags.push(part.trim_start_matches('#').to_string());
-            } else if name.is_empty() {
-                name = part.to_string();
+        for token in tokens {
+            match token {
+                Token::Word(word) => {
+                    if word.starts_with('#') {
+                        tags.push(word.trim_start_matches('#').to_string());
+                    } else if name.is_empty() {
+                        name = word;
+                    }
+                }
+                Token::KeyValue { key, value } => {
+                    if key == "description" || key == "desc" {
+                        description = Some(value);
+                    }
+                }
+                _ => {}
             }
         }
 
-        Command::SaveQuery(SaveQueryArgs { name, tags })
+        Command::SaveQuery(SaveQueryArgs {
+            name,
+            description,
+            tags,
+        })
     }
 
     /// Parse /queries command arguments using the tokenizer.
@@ -497,10 +604,28 @@ impl CommandRouter {
     fn parse_query_command(args: &str) -> Command {
         let parts: Vec<&str> = args.splitn(2, ' ').collect();
         let subcommand = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
-        let name = parts.get(1).map(|s| s.trim()).unwrap_or("");
+        let rest = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
         if subcommand == "delete" {
-            Command::QueryDelete(name.to_string())
+            let tokens = tokenize(rest);
+            let mut name = String::new();
+            let mut confirmed = false;
+
+            for token in tokens {
+                match token {
+                    Token::Word(word) => {
+                        if name.is_empty() {
+                            name = word;
+                        }
+                    }
+                    Token::LongFlag(flag) if flag == "confirm" => {
+                        confirmed = true;
+                    }
+                    _ => {}
+                }
+            }
+
+            Command::QueryDelete(QueryDeleteArgs { name, confirmed })
         } else {
             Command::Unknown("/query".to_string())
         }
