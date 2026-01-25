@@ -61,6 +61,27 @@ pub enum RequestType {
     Confirmation,
 }
 
+/// Represents which phase of operation a request is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperationPhase {
+    Queued,
+    LlmRequesting,
+    LlmThinking,
+    LlmStreaming,
+    LlmParsing,
+    Classifying,
+    DbExecuting,
+    Processing,
+}
+
+/// An in-flight request being processed.
+struct InFlightRequest {
+    id: RequestId,
+    task: tokio::task::JoinHandle<std::result::Result<InputResult, String>>,
+    started_at: Instant,
+    phase: OperationPhase,
+}
+
 /// A request waiting in the queue.
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -119,7 +140,14 @@ pub enum OrchestratorResponse {
     /// Request was queued (not yet processing).
     Queued { id: RequestId, position: usize },
     /// Request started processing.
-    Started { id: RequestId },
+    Started { id: RequestId, phase: OperationPhase },
+    /// Progress update for a running request.
+    Progress {
+        id: RequestId,
+        phase: OperationPhase,
+        elapsed: Duration,
+        detail: Option<String>,
+    },
     /// Operation completed successfully.
     Completed { id: RequestId, result: InputResult },
     /// Query execution completed.
@@ -145,8 +173,10 @@ pub enum OrchestratorResponse {
     /// Queue status changed.
     QueueUpdate {
         queue_depth: usize,
+        max_depth: usize,
         #[allow(dead_code)]
         current: Option<RequestId>,
+        positions: Vec<(RequestId, usize)>,
     },
     /// Queue is full, request rejected.
     QueueFull { id: RequestId },
@@ -212,11 +242,20 @@ impl OrchestratorActor {
 
     /// Sends a queue update to the TUI.
     async fn send_queue_update(&self) {
+        let positions: Vec<(RequestId, usize)> = self
+            .queue
+            .iter()
+            .enumerate()
+            .map(|(idx, req)| (req.id, idx + 1))
+            .collect();
+
         let _ = self
             .response_tx
             .send(OrchestratorResponse::QueueUpdate {
                 queue_depth: self.queue.len(),
+                max_depth: MAX_QUEUE_DEPTH,
                 current: self.current,
+                positions,
             })
             .await;
     }
@@ -270,7 +309,10 @@ impl OrchestratorActor {
 
         let _ = self
             .response_tx
-            .send(OrchestratorResponse::Started { id: request.id })
+            .send(OrchestratorResponse::Started {
+                id: request.id,
+                phase: OperationPhase::Processing,
+            })
             .await;
         self.send_queue_update().await;
 

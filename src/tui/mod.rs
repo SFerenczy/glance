@@ -525,9 +525,18 @@ impl Tui {
                 // Request was queued - could show queue position in UI
                 tracing::debug!("Request {} queued at position {}", id, position);
             }
-            OrchestratorResponse::Started { id } => {
+            OrchestratorResponse::Started { id, phase } => {
                 // Request started processing
-                tracing::debug!("Request {} started", id);
+                tracing::debug!("Request {} started (phase: {:?})", id, phase);
+            }
+            OrchestratorResponse::Progress {
+                id,
+                phase,
+                elapsed,
+                detail: _,
+            } => {
+                // Progress update for a running request
+                tracing::debug!("Request {} progress: {:?} ({:?})", id, phase, elapsed);
             }
             OrchestratorResponse::Completed { id, result } => {
                 // Remove from pending cancellations
@@ -655,7 +664,9 @@ impl Tui {
             }
             OrchestratorResponse::QueueUpdate {
                 queue_depth,
+                max_depth: _,
                 current: _,
+                positions: _,
             } => {
                 self.queue_depth = queue_depth;
                 // Could update UI to show queue depth
