@@ -844,7 +844,7 @@ mod tests {
     fn test_parse_query_delete() {
         assert!(matches!(
             CommandRouter::parse("/query delete myquery"),
-            Command::QueryDelete(s) if s == "myquery"
+            Command::QueryDelete(QueryDeleteArgs { name, confirmed: false }) if name == "myquery"
         ));
     }
 
