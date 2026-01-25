@@ -59,6 +59,11 @@ pub enum InputResult {
         sql: String,
         classification: ClassificationResult,
     },
+    /// User needs to consent to plaintext storage before proceeding.
+    NeedsPlaintextConsent {
+        /// The original input that triggered this (to replay after consent).
+        input: String,
+    },
     /// Application should exit.
     Exit,
     /// Toggle vim mode.
@@ -486,6 +491,9 @@ impl Orchestrator {
                 sql,
                 classification,
             },
+            CommandResult::NeedsPlaintextConsent { input } => {
+                InputResult::NeedsPlaintextConsent { input }
+            }
             CommandResult::Exit => InputResult::Exit,
             CommandResult::ToggleVimMode => InputResult::ToggleVimMode,
             CommandResult::ToggleRowNumbers => InputResult::ToggleRowNumbers,

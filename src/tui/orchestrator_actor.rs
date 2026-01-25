@@ -100,6 +100,8 @@ pub enum CommandAction {
     CancelAll,
     /// Cancel a pending query confirmation dialog.
     CancelPendingQuery { sql: Option<String> },
+    /// Grant consent for plaintext secret storage.
+    GrantPlaintextConsent,
     /// Shut down the actor gracefully.
     Shutdown,
 }
@@ -136,6 +138,8 @@ pub enum OrchestratorCommand {
     /// Cancel a pending query (synchronous, no DB/LLM call).
     /// The SQL is passed so it can be recorded in history.
     CancelPendingQuery { sql: Option<String> },
+    /// Grant consent for plaintext secret storage.
+    GrantPlaintextConsent,
     /// Gracefully close the actor and its resources.
     Shutdown,
 }
@@ -579,6 +583,7 @@ impl OrchestratorActor {
             OrchestratorCommand::CancelPendingQuery { sql } => {
                 CommandAction::CancelPendingQuery { sql }
             }
+            OrchestratorCommand::GrantPlaintextConsent => CommandAction::GrantPlaintextConsent,
             OrchestratorCommand::Shutdown => CommandAction::Shutdown,
         }
     }
@@ -621,6 +626,11 @@ impl OrchestratorActor {
                         log_entry,
                     })
                     .await;
+            }
+            CommandAction::GrantPlaintextConsent => {
+                if let Some(state_db) = self.orchestrator.state_db() {
+                    state_db.secrets().consent_to_plaintext();
+                }
             }
             CommandAction::Shutdown => {
                 // Handled in run() loop
@@ -733,6 +743,14 @@ impl OrchestratorHandle {
     pub async fn cancel_pending_query(&self, sql: Option<String>) -> Result<()> {
         self.sender
             .send(OrchestratorCommand::CancelPendingQuery { sql })
+            .await
+            .map_err(|_| GlanceError::internal("Orchestrator actor closed"))
+    }
+
+    /// Grants consent for plaintext secret storage.
+    pub async fn grant_plaintext_consent(&self) -> Result<()> {
+        self.sender
+            .send(OrchestratorCommand::GrantPlaintextConsent)
             .await
             .map_err(|_| GlanceError::internal("Orchestrator actor closed"))
     }

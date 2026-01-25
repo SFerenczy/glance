@@ -6,7 +6,7 @@ use super::{CommandContext, CommandResult};
 use crate::commands::router::{ConnectionAddArgs, ConnectionDeleteArgs, ConnectionEditArgs};
 use crate::config::ConnectionConfig;
 use crate::db::{DatabaseBackend, DatabaseClient, Schema};
-use crate::persistence::{self, ConnectionProfile, StateDb};
+use crate::persistence::{self, ConnectionProfile, SecretStorageStatus, StateDb};
 
 /// Handle /connections command - list saved connections.
 pub async fn handle_connections_list(ctx: &CommandContext<'_>) -> CommandResult {
@@ -156,6 +156,15 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
         return CommandResult::error("Connection name and database are required.");
     }
 
+    // Check if plaintext consent is needed before storing password
+    if args.password.is_some()
+        && state_db.secrets().status() == SecretStorageStatus::PlaintextPending
+    {
+        return CommandResult::NeedsPlaintextConsent {
+            input: reconstruct_conn_add_command(args),
+        };
+    }
+
     let db_name = args.database.clone().unwrap();
 
     // Parse backend, defaulting to postgres
@@ -255,6 +264,15 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
 pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>) -> CommandResult {
     if args.name.is_empty() {
         return CommandResult::error("Connection name is required.");
+    }
+
+    // Check if plaintext consent is needed before storing password
+    if args.password.is_some()
+        && state_db.secrets().status() == SecretStorageStatus::PlaintextPending
+    {
+        return CommandResult::NeedsPlaintextConsent {
+            input: reconstruct_conn_edit_command(args),
+        };
     }
 
     // Check if any fields are being updated
@@ -419,4 +437,74 @@ pub async fn handle_conn_delete(
         Ok(()) => CommandResult::system(format!("Connection '{}' deleted.", args.name)),
         Err(e) => CommandResult::error(e.to_string()),
     }
+}
+
+/// Reconstructs a /conn add command from parsed args (for replaying after consent).
+fn reconstruct_conn_add_command(args: &ConnectionAddArgs) -> String {
+    let mut cmd = format!("/conn add {}", args.name);
+
+    if let Some(backend) = &args.backend {
+        cmd.push_str(&format!(" backend={}", backend));
+    }
+    if let Some(host) = &args.host {
+        cmd.push_str(&format!(" host={}", host));
+    }
+    if args.port != 5432 {
+        cmd.push_str(&format!(" port={}", args.port));
+    }
+    if let Some(database) = &args.database {
+        cmd.push_str(&format!(" database={}", database));
+    }
+    if let Some(user) = &args.user {
+        cmd.push_str(&format!(" user={}", user));
+    }
+    if let Some(password) = &args.password {
+        cmd.push_str(&format!(" password={}", password));
+    }
+    if let Some(sslmode) = &args.sslmode {
+        cmd.push_str(&format!(" sslmode={}", sslmode));
+    }
+    if let Some(extras) = &args.extras {
+        cmd.push_str(&format!(" {}", extras));
+    }
+    if args.test {
+        cmd.push_str(" --test");
+    }
+
+    cmd
+}
+
+/// Reconstructs a /conn edit command from parsed args (for replaying after consent).
+fn reconstruct_conn_edit_command(args: &ConnectionEditArgs) -> String {
+    let mut cmd = format!("/conn edit {}", args.name);
+
+    if let Some(backend) = &args.backend {
+        cmd.push_str(&format!(" backend={}", backend));
+    }
+    if let Some(host) = &args.host {
+        cmd.push_str(&format!(" host={}", host));
+    }
+    if let Some(port) = args.port {
+        cmd.push_str(&format!(" port={}", port));
+    }
+    if let Some(database) = &args.database {
+        cmd.push_str(&format!(" database={}", database));
+    }
+    if let Some(user) = &args.user {
+        cmd.push_str(&format!(" user={}", user));
+    }
+    if let Some(password) = &args.password {
+        cmd.push_str(&format!(" password={}", password));
+    }
+    if let Some(sslmode) = &args.sslmode {
+        cmd.push_str(&format!(" sslmode={}", sslmode));
+    }
+    if let Some(extras) = &args.extras {
+        cmd.push_str(&format!(" {}", extras));
+    }
+    if args.test {
+        cmd.push_str(" --test");
+    }
+
+    cmd
 }

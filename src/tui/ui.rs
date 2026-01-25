@@ -4,8 +4,8 @@
 
 use super::app::{App, Focus};
 use super::widgets::{
-    chat, command_palette, confirm, header, help, history_selection, input, query_detail, sidebar,
-    sql_completion, toast,
+    chat, command_palette, confirm, header, help, history_selection, input, plaintext_consent,
+    query_detail, sidebar, sql_completion, toast,
 };
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -68,6 +68,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Render confirmation dialog if there's a pending query
     if let Some(pending) = &app.pending_query {
         confirm::render_confirmation_dialog(frame, &pending.sql, &pending.classification);
+    }
+
+    // Render plaintext consent dialog if needed
+    if app.has_pending_plaintext_consent() {
+        plaintext_consent::render_plaintext_consent_dialog(frame);
     }
 
     // Render command palette if visible

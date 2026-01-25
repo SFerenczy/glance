@@ -329,6 +329,11 @@ impl HeadlessRunner {
             } => {
                 self.app.set_pending_query(sql, classification);
             }
+            InputResult::NeedsPlaintextConsent { input } => {
+                // In headless mode, just store the pending consent
+                // Tests should auto-consent via --allow-plaintext or mock-db
+                self.app.set_pending_plaintext_consent(input);
+            }
             InputResult::Exit => {
                 self.app.running = false;
             }
@@ -418,7 +423,8 @@ pub async fn run_headless(cli: &Cli) -> Result<i32> {
     // Create orchestrator with state database if mock-db is enabled
     if cli.mock_db {
         let state_db = StateDb::open_in_memory().await?;
-        // Auto-consent to plaintext storage in headless mode (keyring unavailable in CI/tests)
+        // Auto-consent to plaintext storage in headless mock-db mode
+        // (keyring is unavailable in CI/tests, and mock-db is for testing)
         state_db.secrets().consent_to_plaintext();
         let orchestrator = Orchestrator::for_headless_testing(Arc::new(state_db)).await;
         runner = runner.with_orchestrator(orchestrator);

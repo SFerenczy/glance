@@ -107,6 +107,10 @@ pub struct Cli {
     /// LLM provider to use (overrides config in headless mode)
     #[arg(long, value_name = "PROVIDER")]
     pub llm: Option<String>,
+
+    /// Allow storing secrets in plaintext (when OS keyring is unavailable)
+    #[arg(long)]
+    pub allow_plaintext: bool,
 }
 
 impl Cli {
@@ -181,6 +185,11 @@ impl Cli {
     /// Parses the output format from the --output argument.
     pub fn parse_output_format(&self) -> std::result::Result<OutputFormat, String> {
         self.output.parse()
+    }
+
+    /// Returns true if --allow-plaintext flag is set.
+    pub fn allow_plaintext(&self) -> bool {
+        self.allow_plaintext
     }
 
     /// Validates headless mode arguments.

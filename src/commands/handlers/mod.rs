@@ -44,6 +44,11 @@ pub enum CommandResult {
         sql: String,
         classification: ClassificationResult,
     },
+    /// User needs to consent to plaintext storage before proceeding.
+    NeedsPlaintextConsent {
+        /// The original input that triggered this (to replay after consent).
+        input: String,
+    },
     /// Application should exit.
     Exit,
     /// Toggle vim mode.

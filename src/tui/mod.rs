@@ -474,6 +474,35 @@ impl Tui {
                 }
                 // Let Esc events pass through for double-Esc detection during processing
 
+                // Handle plaintext consent dialog
+                if app_state.has_pending_plaintext_consent() {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Enter => {
+                            // Grant consent and replay the command
+                            if let Some(input) = app_state.take_pending_plaintext_consent() {
+                                // Grant consent via state_db
+                                let _ = handle.grant_plaintext_consent().await;
+                                // Replay the original input
+                                app_state.add_message(app::ChatMessage::User(input.clone()));
+                                app_state.is_processing = true;
+                                let id = RequestId::new();
+                                let token = CancellationToken::new();
+                                self.pending_cancellations.insert(id, token.clone());
+                                app_state.add_pending_request(id, input.clone());
+                                let _ = handle.process_input(id, input, token).await;
+                            }
+                            return;
+                        }
+                        KeyCode::Char('n') | KeyCode::Esc => {
+                            // Cancel - just clear the consent dialog
+                            app_state.take_pending_plaintext_consent();
+                            app_state.show_toast("Plaintext storage declined. Secret not saved.");
+                            return;
+                        }
+                        _ => return, // Ignore other keys when dialog is shown
+                    }
+                }
+
                 // Handle confirmation dialog
                 if app_state.has_pending_query() {
                     match key.code {
@@ -671,6 +700,9 @@ impl Tui {
                         classification,
                     } => {
                         app_state.set_pending_query(sql, classification);
+                    }
+                    InputResult::NeedsPlaintextConsent { input } => {
+                        app_state.set_pending_plaintext_consent(input);
                     }
                     InputResult::Exit => {
                         app_state.running = false;
@@ -881,10 +913,18 @@ pub async fn run_async(
     connection: &ConnectionConfig,
     ui_config: &crate::config::UiConfig,
     llm_provider: LlmProvider,
+    allow_plaintext: bool,
 ) -> Result<()> {
     info!("Connecting to database...");
     let orchestrator = Orchestrator::connect(connection, llm_provider).await?;
     info!("Connected successfully");
+
+    // Grant plaintext consent if --allow-plaintext flag was passed
+    if allow_plaintext {
+        if let Some(state_db) = orchestrator.state_db() {
+            state_db.secrets().consent_to_plaintext();
+        }
+    }
 
     let mut tui = Tui::new()?;
     tui.run_with_orchestrator(Some(connection), ui_config, orchestrator)

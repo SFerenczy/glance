@@ -357,6 +357,8 @@ pub struct App {
     pub connection_info: Option<String>,
     /// Pending query awaiting confirmation.
     pub pending_query: Option<PendingQuery>,
+    /// Pending plaintext consent: stores the input to replay after user consents.
+    pub pending_plaintext_consent: Option<String>,
     /// Whether the application is currently processing (waiting for LLM/DB).
     pub is_processing: bool,
     /// Active spinner for visual feedback during async operations.
@@ -525,6 +527,7 @@ impl App {
             show_query_detail: false,
             connection_info,
             pending_query: None,
+            pending_plaintext_consent: None,
             is_processing: false,
             spinner: None,
             last_executed_sql: None,
@@ -817,6 +820,21 @@ impl App {
     /// Takes the pending query, returning it and clearing the state.
     pub fn take_pending_query(&mut self) -> Option<PendingQuery> {
         self.pending_query.take()
+    }
+
+    /// Returns true if a plaintext consent dialog should be shown.
+    pub fn has_pending_plaintext_consent(&self) -> bool {
+        self.pending_plaintext_consent.is_some()
+    }
+
+    /// Sets a pending plaintext consent request with the input to replay.
+    pub fn set_pending_plaintext_consent(&mut self, input: String) {
+        self.pending_plaintext_consent = Some(input);
+    }
+
+    /// Takes the pending plaintext consent, returning it and clearing the state.
+    pub fn take_pending_plaintext_consent(&mut self) -> Option<String> {
+        self.pending_plaintext_consent.take()
     }
 
     /// Adds a message to the chat.

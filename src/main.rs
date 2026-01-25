@@ -78,7 +78,7 @@ async fn run(cli: Cli) -> Result<()> {
             let llm_provider = validate_llm_provider(&config.llm.provider, &config_path)?;
 
             // Run with full orchestrator integration
-            tui::run_async(conn, &config.ui, llm_provider).await?;
+            tui::run_async(conn, &config.ui, llm_provider, cli.allow_plaintext()).await?;
         }
         None => {
             warn!("No database connection configured. Running in limited mode.");

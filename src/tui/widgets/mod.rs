@@ -9,6 +9,7 @@ pub mod header;
 pub mod help;
 pub mod history_selection;
 pub mod input;
+pub mod plaintext_consent;
 pub mod query_detail;
 pub mod sidebar;
 pub mod spinner;
