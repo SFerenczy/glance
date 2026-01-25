@@ -16,6 +16,10 @@ use ratatui::{
 /// Chat panel widget.
 pub struct ChatPanel<'a> {
     messages: &'a [ChatMessage],
+    pending_requests: &'a [(
+        crate::tui::orchestrator_actor::RequestId,
+        &'a crate::tui::app::PendingRequestView,
+    )],
     scroll_offset: usize,
     focused: bool,
     has_new_messages: bool,
@@ -26,8 +30,13 @@ pub struct ChatPanel<'a> {
 
 impl<'a> ChatPanel<'a> {
     /// Creates a new chat panel widget.
+    #[allow(clippy::too_many_arguments)] // Widget constructors need many params
     pub fn new(
         messages: &'a [ChatMessage],
+        pending_requests: &'a [(
+            crate::tui::orchestrator_actor::RequestId,
+            &'a crate::tui::app::PendingRequestView,
+        )],
         scroll_offset: usize,
         focused: bool,
         has_new_messages: bool,
@@ -37,6 +46,7 @@ impl<'a> ChatPanel<'a> {
     ) -> Self {
         Self {
             messages,
+            pending_requests,
             scroll_offset,
             focused,
             has_new_messages,
@@ -116,6 +126,14 @@ impl<'a> ChatPanel<'a> {
             }
         }
 
+        // Render pending request placeholders
+        for (_id, pending) in self.pending_requests {
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+            }
+            lines.extend(self.render_pending_request(pending));
+        }
+
         // Add inline spinner/thinking indicator at the end if active
         if let Some(spinner) = self.spinner {
             if !lines.is_empty() {
@@ -134,6 +152,69 @@ impl<'a> ChatPanel<'a> {
             .fg(Color::Yellow)
             .add_modifier(Modifier::ITALIC);
         vec![Line::from(Span::styled(display, style))]
+    }
+
+    /// Renders a pending request placeholder.
+    fn render_pending_request(
+        &self,
+        pending: &crate::tui::app::PendingRequestView,
+    ) -> Vec<Line<'a>> {
+        use crate::tui::app::RequestStatus;
+        use crate::tui::orchestrator_actor::OperationPhase;
+
+        let mut lines = Vec::new();
+
+        let status_line = match pending.status {
+            RequestStatus::Queued => {
+                if let Some(pos) = pending.position {
+                    format!("◯ Queued (#{} in queue)", pos)
+                } else {
+                    "◯ Queued".to_string()
+                }
+            }
+            RequestStatus::Processing | RequestStatus::Streaming => {
+                let elapsed = pending
+                    .started_at
+                    .map(|start| start.elapsed())
+                    .unwrap_or_default();
+
+                let phase_text = match pending.phase {
+                    OperationPhase::LlmThinking => "⠋ Thinking...",
+                    OperationPhase::LlmStreaming => "⠋ Receiving...",
+                    OperationPhase::DbExecuting => "⠋ Executing query...",
+                    _ => "⠋ Processing...",
+                };
+
+                if elapsed.as_secs() >= 1 {
+                    let secs = elapsed.as_secs_f32();
+                    if secs < 60.0 {
+                        format!("{} {:.1}s", phase_text, secs)
+                    } else {
+                        let mins = secs as u64 / 60;
+                        let remaining = secs as u64 % 60;
+                        format!("{} {}m {}s", phase_text, mins, remaining)
+                    }
+                } else {
+                    phase_text.to_string()
+                }
+            }
+            RequestStatus::Cancelled => "✗ Cancelled".to_string(),
+            RequestStatus::Error(ref msg) => format!("✗ Error: {}", msg),
+        };
+
+        lines.push(Line::styled(
+            status_line,
+            Style::default().fg(Color::Yellow),
+        ));
+
+        // Show streaming content if available
+        if !pending.streaming_content.is_empty() {
+            for line in pending.streaming_content.lines() {
+                lines.push(Line::from(format!("  {}", line)));
+            }
+        }
+
+        lines
     }
 
     /// Renders a user message.
@@ -372,7 +453,7 @@ mod tests {
     #[test]
     fn test_chat_panel_empty() {
         let messages: Vec<ChatMessage> = vec![];
-        let panel = ChatPanel::new(&messages, 0, false, false, None, None, false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false);
         let lines = panel.render_messages(80);
         assert!(lines.is_empty());
     }
@@ -380,7 +461,7 @@ mod tests {
     #[test]
     fn test_chat_panel_user_message() {
         let messages = vec![ChatMessage::User("Hello".to_string())];
-        let panel = ChatPanel::new(&messages, 0, false, false, None, None, false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false);
         let lines = panel.render_messages(80);
 
         // Should have label + content
@@ -390,7 +471,7 @@ mod tests {
     #[test]
     fn test_chat_panel_multiline_message() {
         let messages = vec![ChatMessage::User("Line 1\nLine 2\nLine 3".to_string())];
-        let panel = ChatPanel::new(&messages, 0, false, false, None, None, false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false);
         let lines = panel.render_messages(80);
 
         // Should have label + 3 content lines
@@ -408,7 +489,7 @@ mod tests {
             was_truncated: false,
         };
         let messages = vec![ChatMessage::Result(result)];
-        let panel = ChatPanel::new(&messages, 0, false, false, None, None, false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false);
         let lines = panel.render_messages(80);
 
         // Should have table lines
@@ -421,7 +502,7 @@ mod tests {
             ChatMessage::User("Hello".to_string()),
             ChatMessage::Assistant("Hi there!".to_string()),
         ];
-        let panel = ChatPanel::new(&messages, 0, false, false, None, None, false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, None, false);
         let lines = panel.render_messages(80);
 
         // Should have lines for both messages plus spacing
@@ -432,7 +513,7 @@ mod tests {
     fn test_chat_panel_with_spinner() {
         let messages = vec![ChatMessage::User("Hello".to_string())];
         let spinner = Spinner::thinking();
-        let panel = ChatPanel::new(&messages, 0, false, false, None, Some(&spinner), false);
+        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, Some(&spinner), false);
         let lines = panel.render_messages(80);
 
         // Should have user message (2 lines) + spacing + spinner (1 line)

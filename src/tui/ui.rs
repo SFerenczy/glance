@@ -116,8 +116,17 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
 /// Renders the chat panel.
 fn render_chat(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Chat;
+
+    // Build pending requests list in stable order
+    let pending: Vec<_> = app
+        .pending_order
+        .iter()
+        .filter_map(|id| app.pending_requests.get(id).map(|req| (*id, req)))
+        .collect();
+
     let widget = chat::ChatPanel::new(
         &app.messages,
+        &pending,
         app.chat_scroll,
         focused,
         app.has_new_messages,
