@@ -189,3 +189,38 @@ fn test_headless_esc_clears_input() {
     assert_eq!(code, 0);
     assert!(stdout.contains(r#""passed": 1"#));
 }
+
+#[test]
+fn test_headless_empty_result_with_column_headers() {
+    // Test that empty results display column headers and "No results" message
+    // Use SELECT * to avoid comma issues in event parsing
+    let (code, stdout, stderr) = run_headless(&[
+        "--headless",
+        "--mock-db",
+        "--events",
+        "type:/sql SELECT * FROM users WHERE 1 = 0,key:enter,wait:100",
+        "--output",
+        "frames",
+    ]);
+
+    if code != 0 {
+        eprintln!("STDOUT:\n{}", stdout);
+        eprintln!("STDERR:\n{}", stderr);
+    }
+
+    assert_eq!(code, 0, "Should execute successfully");
+
+    // Verify the output contains "result" column header (from mock)
+    assert!(
+        stdout.contains("result"),
+        "Should display column header in:\n{}",
+        stdout
+    );
+
+    // Verify "No results" message is displayed
+    assert!(
+        stdout.contains("No results") || stdout.contains("0 rows"),
+        "Should display 'No results' or '0 rows' message for empty result in:\n{}",
+        stdout
+    );
+}

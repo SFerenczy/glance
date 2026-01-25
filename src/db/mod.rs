@@ -8,7 +8,7 @@ mod postgres;
 mod schema;
 mod types;
 
-pub use mock::MockDatabaseClient;
+pub use mock::{FailingDatabaseClient, MockDatabaseClient};
 #[allow(unused_imports)]
 pub use postgres::PostgresClient;
 pub use schema::{Column, ForeignKey, Index, Schema, Table};
