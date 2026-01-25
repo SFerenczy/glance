@@ -30,6 +30,8 @@ pub struct InputBar<'a> {
     focused: bool,
     mode: InputMode,
     vim_mode_enabled: bool,
+    disabled: bool,
+    custom_prompt: Option<&'a str>,
 }
 
 impl<'a> InputBar<'a> {
@@ -40,6 +42,8 @@ impl<'a> InputBar<'a> {
         focused: bool,
         mode: InputMode,
         vim_mode_enabled: bool,
+        disabled: bool,
+        custom_prompt: Option<&'a str>,
     ) -> Self {
         Self {
             text,
@@ -47,6 +51,8 @@ impl<'a> InputBar<'a> {
             focused,
             mode,
             vim_mode_enabled,
+            disabled,
+            custom_prompt,
         }
     }
 }
@@ -75,25 +81,47 @@ impl Widget for InputBar<'_> {
             .title(" Input ");
 
         // Build the input line with prompt and mode indicator
-        let prompt_style = Style::default()
-            .fg(Color::Green)
-            .add_modifier(Modifier::BOLD);
-        let text_style = Style::default();
+        let (prompt_text, prompt_style) = if self.disabled {
+            let text = self.custom_prompt.unwrap_or("Queue full");
+            (text, Style::default().fg(Color::DarkGray))
+        } else if let Some(prompt) = self.custom_prompt {
+            (prompt, Style::default().fg(Color::Yellow))
+        } else {
+            (
+                "> ",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
+        };
+
+        let text_style = if self.disabled {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            Style::default()
+        };
 
         // Calculate available width for text (subtract borders and prompt)
-        // Border left (1) + prompt "> " (2) + border right (1) + cursor space (1) = 5
-        let available_width = area.width.saturating_sub(5) as usize;
-        let scroll_offset = calculate_scroll_offset(self.cursor, self.text.len(), available_width);
+        let prompt_len = prompt_text.len();
+        let available_width = area.width.saturating_sub(prompt_len as u16 + 3) as usize;
+        let scroll_offset = if self.disabled {
+            0
+        } else {
+            calculate_scroll_offset(self.cursor, self.text.len(), available_width)
+        };
 
         // Get the visible portion of text
-        let visible_text = if scroll_offset < self.text.len() {
+        let visible_text = if self.disabled {
+            ""
+        } else if scroll_offset < self.text.len() {
             &self.text[scroll_offset..]
         } else {
             ""
         };
 
         let line = Line::from(vec![
-            Span::styled("> ", prompt_style),
+            Span::styled(prompt_text, prompt_style),
+            Span::raw(" "),
             Span::styled(visible_text, text_style),
         ]);
 
@@ -118,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_input_bar_creation() {
-        let input = InputBar::new("hello", 5, true, InputMode::Insert, false);
+        let input = InputBar::new("hello", 5, true, InputMode::Insert, false, false, None);
         assert_eq!(input.text, "hello");
         assert_eq!(input.cursor, 5);
         assert!(input.focused);
@@ -127,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_input_bar_with_vim_mode() {
-        let input = InputBar::new("test", 2, true, InputMode::Normal, true);
+        let input = InputBar::new("test", 2, true, InputMode::Normal, true, false, None);
         assert!(input.vim_mode_enabled);
     }
 

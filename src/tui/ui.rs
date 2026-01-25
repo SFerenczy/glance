@@ -162,12 +162,25 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Input;
     // Store input area for popup positioning
     app.input_area = Some(area);
+
+    // Determine input state
+    let disabled = app.is_queue_full();
+    let custom_prompt = if app.has_pending_query() {
+        Some("[y/n] Execute?")
+    } else if disabled {
+        Some("Queue full - wait for requests to complete")
+    } else {
+        None
+    };
+
     let widget = input::InputBar::new(
         &app.input.text,
         app.input.cursor,
         focused,
         app.input_mode,
         app.vim_mode_enabled,
+        disabled,
+        custom_prompt,
     );
     frame.render_widget(widget, area);
 
