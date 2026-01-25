@@ -453,6 +453,12 @@ impl Tui {
                 {
                     // Close SQL completion popup if open (Enter submits, doesn't accept completion)
                     app_state.sql_completion.close();
+
+                    // Block submissions when queue is full
+                    if app_state.is_queue_full() {
+                        return;
+                    }
+
                     if let Some(input) = app_state.submit_input() {
                         // Add user message to chat
                         app_state.add_message(app::ChatMessage::User(input.clone()));
