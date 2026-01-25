@@ -229,6 +229,58 @@ Export query results to CSV, JSON, or SQL INSERT statements.
 
 ---
 
+## Technical Debt & Known Issues
+
+### Flaky Orchestrator Actor Tests
+
+**Status**: Currently ignored
+**Effort**: Medium
+**Priority**: Medium (tests work intermittently, need stabilization)
+
+Two orchestrator actor tests are currently ignored due to timing dependencies with mock orchestrator:
+
+- `test_queue_max_depth` - Mock processes requests too fast, queue empties before overflow test can verify QueueFull response
+- `test_cancel_queued_request` - Timing-dependent, may need mock with artificial delays to reliably test cancellation of queued requests
+
+**Location**: `src/tui/orchestrator_actor.rs:994-1086`
+
+**Root Cause**: The mock orchestrator processes requests instantly without I/O delays, making it difficult to test queue states and cancellation timing. Real orchestrator has natural delays from LLM/DB I/O that make these scenarios testable in production.
+
+**Proposed Solutions**:
+1. Add configurable delays to mock orchestrator for testing
+2. Refactor tests to use synchronization primitives (barriers, latches)
+3. Use deterministic async test scheduling (tokio-test)
+4. Extract queue logic for unit testing without full actor setup
+
+**Impact**: Tests were passing before v0.2d actor refactor (commit 9e50285), then became flaky with tokio::select! implementation. Functionality works correctly in production, but we lack reliable automated verification.
+
+---
+
+### SQL Completion Auto-Trigger Behavior
+
+**Status**: Implemented with workaround
+**Effort**: Low (refinement)
+**Priority**: Low (works correctly, but logic could be cleaner)
+
+SQL completion visibility logic required special handling to auto-trigger in suggestion contexts without requiring Ctrl+Space:
+
+**Implementation**: Added `auto_trigger_contexts` check in `update()` method that automatically sets `force_opened = true` for contexts like `FromTable`, `SelectColumns`, `WhereClause`, etc.
+
+**Location**: `src/tui/widgets/sql_completion.rs:246-289`
+
+**Issue**: The original v0.2a spec intended completion to only show when:
+- Filter is not empty (user typed something), OR
+- User pressed Ctrl+Space (force_opened)
+
+However, integration tests expected completions to appear automatically when typing "SELECT * FROM " without any additional trigger. The auto-trigger logic was added to maintain backward compatibility with test expectations.
+
+**Considerations**:
+- Current behavior feels intuitive to users (completions appear when expected)
+- May want to make this configurable via settings in future
+- Consider consolidating trigger logic to avoid dual conditions
+
+---
+
 ## Evaluation Criteria
 
 When prioritizing backlog items, consider:
