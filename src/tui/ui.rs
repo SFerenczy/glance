@@ -108,6 +108,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         app.connection_info.as_deref(),
         app.spinner.as_ref(),
         app.is_connected,
+        app.queue_depth,
     );
     frame.render_widget(widget, area);
 }

@@ -16,6 +16,7 @@ pub struct Header<'a> {
     connection_info: Option<&'a str>,
     spinner: Option<&'a Spinner>,
     is_connected: bool,
+    queue_depth: usize,
 }
 
 impl<'a> Header<'a> {
@@ -24,11 +25,13 @@ impl<'a> Header<'a> {
         connection_info: Option<&'a str>,
         spinner: Option<&'a Spinner>,
         is_connected: bool,
+        queue_depth: usize,
     ) -> Self {
         Self {
             connection_info,
             spinner,
             is_connected,
+            queue_depth,
         }
     }
 }
@@ -62,27 +65,47 @@ impl Widget for Header<'_> {
             buf.set_string(spinner_x, area.y, &spinner_text, spinner_style);
         }
 
-        // Right side: connection status indicator and info
+        // Right side: queue depth (if > 0) + connection status indicator and info
+        let mut right_spans = Vec::new();
+
+        // Add queue indicator if there are queued requests
+        if self.queue_depth > 0 {
+            right_spans.push(Span::styled(
+                format!("Queue: {} ", self.queue_depth),
+                Style::default().bg(Color::Blue).fg(Color::Yellow),
+            ));
+        }
+
+        // Add connection info
         if let Some(info) = self.connection_info {
-            // Connection status dot
             let status_dot = if self.is_connected { "●" } else { "○" };
             let status_color = if self.is_connected {
                 Color::Green
             } else {
                 Color::Gray
             };
-            let status_style = Style::default().bg(Color::Blue).fg(status_color);
 
-            let right_text = format!(" {} [db: {}] ", status_dot, info);
-            let right_width = right_text.len() as u16;
+            right_spans.push(Span::styled(
+                " ",
+                Style::default().bg(Color::Blue).fg(Color::White),
+            ));
+            right_spans.push(Span::styled(
+                status_dot,
+                Style::default().bg(Color::Blue).fg(status_color),
+            ));
+            right_spans.push(Span::styled(
+                format!(" [db: {}] ", info),
+                Style::default().bg(Color::Blue).fg(Color::White),
+            ));
+        }
+
+        // Render right side
+        if !right_spans.is_empty() {
+            let right_line = Line::from(right_spans);
+            let right_width = right_line.width() as u16;
             if right_width < area.width {
                 let right_x = area.right().saturating_sub(right_width);
-                // Render the status dot with its color
-                buf.set_string(right_x, area.y, " ", style);
-                buf.set_string(right_x + 1, area.y, status_dot, status_style);
-                // Render the rest with normal style
-                let db_text = format!(" [db: {}] ", info);
-                buf.set_string(right_x + 2, area.y, &db_text, style);
+                buf.set_line(right_x, area.y, &right_line, right_width);
             }
         }
     }
