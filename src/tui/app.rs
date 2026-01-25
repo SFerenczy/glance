@@ -51,6 +51,10 @@ pub struct QueryLogEntry {
     pub timestamp: Instant,
     /// How the query was initiated.
     pub source: QuerySource,
+    /// The natural language question that triggered this query (for grouping).
+    pub nl_question: Option<String>,
+    /// Index of the result message in the chat (for navigation).
+    pub result_message_index: Option<usize>,
 }
 
 impl QueryLogEntry {
@@ -65,6 +69,8 @@ impl QueryLogEntry {
             error: None,
             timestamp: Instant::now(),
             source: QuerySource::Manual,
+            nl_question: None,
+            result_message_index: None,
         }
     }
 
@@ -83,6 +89,8 @@ impl QueryLogEntry {
             error: None,
             timestamp: Instant::now(),
             source,
+            nl_question: None,
+            result_message_index: None,
         }
     }
 
@@ -97,6 +105,8 @@ impl QueryLogEntry {
             error: Some(error),
             timestamp: Instant::now(),
             source: QuerySource::Manual,
+            nl_question: None,
+            result_message_index: None,
         }
     }
 
@@ -115,6 +125,8 @@ impl QueryLogEntry {
             error: Some(error),
             timestamp: Instant::now(),
             source,
+            nl_question: None,
+            result_message_index: None,
         }
     }
 
@@ -128,6 +140,8 @@ impl QueryLogEntry {
             error: None,
             timestamp: Instant::now(),
             source,
+            nl_question: None,
+            result_message_index: None,
         }
     }
 
@@ -835,13 +849,21 @@ impl App {
     }
 
     /// Adds a query to the log.
-    pub fn add_query_log(&mut self, entry: QueryLogEntry) {
+    pub fn add_query_log(&mut self, mut entry: QueryLogEntry) {
         // Check if query was long enough to trigger bell
         if self.bell_on_completion
             && entry.status == QueryStatus::Success
             && entry.execution_time.as_secs() >= self.bell_threshold_seconds
         {
             self.request_bell();
+        }
+
+        // Find the index of the last Result message (if any)
+        for (idx, msg) in self.messages.iter().enumerate().rev() {
+            if matches!(msg, ChatMessage::Result(_)) {
+                entry.result_message_index = Some(idx);
+                break;
+            }
         }
 
         // Insert at the beginning (most recent first)
@@ -880,9 +902,19 @@ impl App {
         });
     }
 
-    /// Opens the query detail modal for the selected query.
+    /// Opens the query detail modal for the selected query and navigates to result.
     pub fn open_query_detail(&mut self) {
-        if self.selected_query.is_some() {
+        if let Some(idx) = self.selected_query {
+            // Navigate to the result message if available
+            if let Some(entry) = self.query_log.get(idx) {
+                if let Some(msg_idx) = entry.result_message_index {
+                    // Switch focus to chat and scroll to the result
+                    self.focus = Focus::Chat;
+                    self.scroll_to_message(msg_idx);
+                    return;
+                }
+            }
+            // Fall back to showing detail modal if no result message index
             self.show_query_detail = true;
         }
     }
@@ -890,6 +922,17 @@ impl App {
     /// Closes the query detail modal.
     pub fn close_query_detail(&mut self) {
         self.show_query_detail = false;
+    }
+
+    /// Scrolls the chat to a specific message index.
+    pub fn scroll_to_message(&mut self, message_index: usize) {
+        // Calculate approximate scroll position
+        // This is a simplified implementation - scroll to make message visible near top
+        if message_index < self.messages.len() {
+            // Approximate: each message takes ~5 lines on average
+            self.chat_scroll = message_index.saturating_mul(5).saturating_sub(5);
+            self.has_new_messages = false;
+        }
     }
 
     /// Returns true if the input is in SQL mode (starts with "/sql ").
