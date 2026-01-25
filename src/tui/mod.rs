@@ -83,6 +83,8 @@ pub struct Tui {
     pending_cancellations: std::collections::HashMap<RequestId, CancellationToken>,
     /// Current queue depth from orchestrator.
     queue_depth: usize,
+    /// Pending resize event (dimensions and timestamp) for debouncing.
+    pending_resize: Option<(u16, u16, std::time::Instant)>,
 }
 
 impl Tui {
@@ -102,6 +104,7 @@ impl Tui {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             pending_cancellations: std::collections::HashMap::new(),
             queue_depth: 0,
+            pending_resize: None,
         })
     }
 
@@ -177,7 +180,7 @@ impl Tui {
     }
 
     /// Runs the main TUI event loop (synchronous version without orchestrator).
-    pub fn run(&mut self, connection: Option<&ConnectionConfig>) -> Result<()> {
+    pub fn run(&mut self, connection: Option<&ConnectionConfig>, ui_config: &crate::config::UiConfig) -> Result<()> {
         // Set up panic hook to restore terminal on panic
         let original_hook = panic::take_hook();
         panic::set_hook(Box::new(move |panic_info| {
@@ -192,7 +195,7 @@ impl Tui {
             original_hook(panic_info);
         }));
 
-        let mut app_state = App::new(connection);
+        let mut app_state = App::new(connection, ui_config);
 
         while app_state.running {
             // Draw the UI
@@ -248,6 +251,7 @@ impl Tui {
     pub async fn run_with_orchestrator(
         &mut self,
         connection: Option<&ConnectionConfig>,
+        ui_config: &crate::config::UiConfig,
         orchestrator: Orchestrator,
     ) -> Result<()> {
         // Set up panic hook to restore terminal on panic
@@ -262,7 +266,7 @@ impl Tui {
             original_hook(panic_info);
         }));
 
-        let mut app_state = App::new(connection);
+        let mut app_state = App::new(connection, ui_config);
 
         // Channel for progress updates and orchestrator responses
         let (progress_tx, mut progress_rx) = mpsc::channel::<ProgressMessage>(32);
@@ -327,6 +331,14 @@ impl Tui {
                 break;
             }
 
+            // Check for debounced resize event (50ms debounce)
+            if let Some((width, height, timestamp)) = self.pending_resize {
+                if timestamp.elapsed() >= std::time::Duration::from_millis(50) {
+                    app_state.handle_event(Event::Resize(width, height));
+                    self.pending_resize = None;
+                }
+            }
+
             // Use tokio::select! to handle events, async messages, and progress updates
             tokio::select! {
                 // Handle terminal events
@@ -375,22 +387,15 @@ impl Tui {
 
         match event {
             CEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                // Handle cancellation during processing, allow other keys through
+                // During processing, only handle Ctrl+C for immediate cancellation
                 if app_state.is_processing {
-                    match key.code {
-                        KeyCode::Esc => {
-                            // Cancel the current operation
-                            let _ = handle.cancel_current().await;
-                            return;
-                        }
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            // Cancel all operations (don't exit)
-                            let _ = handle.cancel_all().await;
-                            self.cancel_all_pending();
-                            return;
-                        }
-                        _ => {}
+                    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                        // Cancel all operations (don't exit)
+                        let _ = handle.cancel_all().await;
+                        self.cancel_all_pending();
+                        return;
                     }
+                    // Let Esc events pass through for double-Esc detection
                 }
 
                 // Handle confirmation dialog
@@ -492,12 +497,18 @@ impl Tui {
                     self.pending_cancellations.insert(id, token.clone());
                     let _ = handle.process_input(id, input, token).await;
                 }
+
+                // Check if double-Esc cancellation was requested
+                if app_state.take_cancel_request() {
+                    let _ = handle.cancel_current().await;
+                }
             }
             CEvent::Mouse(mouse) => {
                 app_state.handle_event(Event::Mouse(mouse));
             }
             CEvent::Resize(w, h) => {
-                app_state.handle_event(Event::Resize(w, h));
+                // Store resize event for debouncing (50ms)
+                self.pending_resize = Some((w, h, std::time::Instant::now()));
             }
             _ => {}
         }
@@ -530,6 +541,7 @@ impl Tui {
                             app_state.add_message(m);
                         }
                         if let Some(entry) = log_entry {
+                            app_state.last_executed_sql = Some(entry.sql.clone());
                             app_state.add_query_log(entry);
                         }
                     }
@@ -602,6 +614,7 @@ impl Tui {
                     app_state.add_message(m);
                 }
                 if let Some(entry) = log_entry {
+                    app_state.last_executed_sql = Some(entry.sql.clone());
                     app_state.add_query_log(entry);
                 }
             }
@@ -712,19 +725,19 @@ impl Drop for Tui {
 }
 
 /// Runs the TUI application (synchronous, without orchestrator).
-pub fn run(connection: Option<&ConnectionConfig>) -> Result<()> {
+pub fn run(connection: Option<&ConnectionConfig>, ui_config: &crate::config::UiConfig) -> Result<()> {
     let mut tui = Tui::new()?;
-    tui.run(connection)
+    tui.run(connection, ui_config)
 }
 
 /// Runs the TUI application with full orchestrator integration.
-pub async fn run_async(connection: &ConnectionConfig, llm_provider: LlmProvider) -> Result<()> {
+pub async fn run_async(connection: &ConnectionConfig, ui_config: &crate::config::UiConfig, llm_provider: LlmProvider) -> Result<()> {
     info!("Connecting to database...");
     let orchestrator = Orchestrator::connect(connection, llm_provider).await?;
     info!("Connected successfully");
 
     let mut tui = Tui::new()?;
-    tui.run_with_orchestrator(Some(connection), orchestrator)
+    tui.run_with_orchestrator(Some(connection), ui_config, orchestrator)
         .await
 }
 

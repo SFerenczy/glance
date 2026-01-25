@@ -147,7 +147,7 @@ impl HeadlessRunner {
         let terminal = Terminal::new(backend)
             .map_err(|e| GlanceError::internal(format!("Failed to create test terminal: {e}")))?;
 
-        let app = App::new(None);
+        let app = App::new(None, &crate::config::UiConfig::default());
 
         Ok(Self {
             config,

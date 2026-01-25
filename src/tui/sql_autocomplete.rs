@@ -37,6 +37,10 @@ pub enum SqlContext {
     SetClause,
     /// After INSERT INTO table - suggest columns or VALUES.
     InsertColumns,
+    /// After UPDATE keyword - suggest table names.
+    UpdateTable,
+    /// After INSERT INTO - suggest table names.
+    InsertTable,
 }
 
 /// A parsed table alias mapping.
@@ -316,6 +320,7 @@ pub fn parse_sql_context(sql: &str, cursor_pos: usize) -> SqlParseResult {
             }
             "UPDATE" => {
                 in_where = false;
+                context = SqlContext::UpdateTable;
                 if i + 1 < tokens.len() {
                     if let Token::Ident(table_str) = &tokens[i + 1] {
                         let table = table_str.to_lowercase();
@@ -332,15 +337,16 @@ pub fn parse_sql_context(sql: &str, cursor_pos: usize) -> SqlParseResult {
             "INSERT" => {
                 in_where = false;
                 if i + 1 < tokens.len() && token_strs[i + 1].to_uppercase() == "INTO" {
+                    context = SqlContext::InsertTable;
                     if i + 2 < tokens.len() {
                         if let Token::Ident(table_str) = &tokens[i + 2] {
                             let table = table_str.to_lowercase();
                             if !is_keyword(&table) {
                                 tables.push(table);
+                                context = SqlContext::InsertColumns;
                             }
                         }
                     }
-                    context = SqlContext::InsertColumns;
                     i += 1;
                 }
             }

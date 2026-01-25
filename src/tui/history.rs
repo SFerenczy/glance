@@ -78,11 +78,13 @@ impl InputHistory {
 
     /// Navigates to the next (newer) entry in history.
     /// Returns the entry to display, or the draft if returning to newest position.
+    /// Returns empty string if already at newest to clear input.
     pub fn next(&mut self) -> Option<&str> {
         match self.position {
             None => {
-                // Already at newest position
-                None
+                // Already at newest position - clear draft and return empty string
+                self.draft.clear();
+                Some("")
             }
             Some(pos) if pos + 1 < self.entries.len() => {
                 // Move to newer entry

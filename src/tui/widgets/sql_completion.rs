@@ -104,6 +104,8 @@ pub struct SqlCompletionState {
     pub filter: String,
     /// Recently used completions for recency ranking (within session).
     pub recent_completions: HashSet<String>,
+    /// Whether the popup was force-opened (Ctrl+Space).
+    force_opened: bool,
 }
 
 impl SqlCompletionState {
@@ -115,7 +117,14 @@ impl SqlCompletionState {
     /// Updates completions based on the current input and schema.
     pub fn update(&mut self, input: &str, cursor_pos: usize, schema: Option<&Schema>) {
         let result = parse_sql_context(input, cursor_pos);
+        let old_filter = self.filter.clone();
         self.filter = result.current_word.clone();
+
+        // Reset force_opened if filter changed (user started typing)
+        if !old_filter.is_empty() && self.filter != old_filter {
+            self.force_opened = false;
+        }
+
         self.items.clear();
 
         // Generate completions based on context
@@ -212,6 +221,18 @@ impl SqlCompletionState {
                     }
                 }
             }
+            SqlContext::UpdateTable | SqlContext::InsertTable => {
+                // Suggest table names
+                if let Some(schema) = schema {
+                    self.add_tables(schema);
+                } else {
+                    // Graceful degradation: show hint when no schema
+                    self.items.push(CompletionItem::new(
+                        "(connect to see tables)",
+                        CompletionKind::Hint,
+                    ));
+                }
+            }
             SqlContext::SetClause | SqlContext::InsertColumns => {
                 // Suggest columns from the target table
                 if let Some(schema) = schema {
@@ -250,9 +271,20 @@ impl SqlCompletionState {
                 .then_with(|| a.text.to_lowercase().cmp(&b.text.to_lowercase()))
         });
 
-        // Update visibility
-        self.visible = !self.items.is_empty();
+        // Update visibility: only show if we have items AND (filter is not empty OR force-opened)
+        self.visible = !self.items.is_empty() && (!self.filter.is_empty() || self.force_opened);
         self.selected = 0;
+    }
+
+    /// Forces the completion popup to open (for Ctrl+Space).
+    pub fn force_open(&mut self) {
+        self.force_opened = true;
+    }
+
+    /// Closes the completion popup.
+    pub fn close(&mut self) {
+        self.visible = false;
+        self.force_opened = false;
     }
 
     /// Records a completion as recently used for recency ranking.

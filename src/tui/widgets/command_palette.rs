@@ -150,9 +150,9 @@ impl CommandPaletteState {
     fn update_filtered(&mut self) {
         self.filtered_commands.clear();
 
-        // Require at least 1 character to show filtered results (per FR-2.3)
         if self.filter.is_empty() {
-            // Show nothing when filter is empty - user must type at least 1 char
+            // Show all commands when filter is empty (per v0.2a spec)
+            self.filtered_commands.extend(0..COMMANDS.len());
         } else {
             // Score and sort commands by match quality
             let filter_lower = self.filter.to_lowercase();

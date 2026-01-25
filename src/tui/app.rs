@@ -6,7 +6,7 @@ use super::history::InputHistory;
 use super::widgets::command_palette::CommandPaletteState;
 use super::widgets::spinner::Spinner;
 use super::widgets::sql_completion::SqlCompletionState;
-use crate::config::ConnectionConfig;
+use crate::config::{ConnectionConfig, UiConfig};
 use crate::db::QueryResult;
 use crate::db::Schema;
 use std::time::{Duration, Instant};
@@ -365,6 +365,10 @@ pub struct App {
     pub vim_mode_enabled: bool,
     /// Whether to show row numbers in result tables (toggled via /rownumbers command).
     pub show_row_numbers: bool,
+    /// Whether to ring bell on long query completion.
+    pub bell_on_completion: bool,
+    /// Threshold in seconds for long query bell.
+    pub bell_threshold_seconds: u64,
     /// Text selection state for copy functionality.
     pub text_selection: Option<TextSelection>,
     /// The area where the chat panel was last rendered (for mouse hit testing).
@@ -415,7 +419,7 @@ pub struct PendingQuery {
 
 impl App {
     /// Creates a new App instance.
-    pub fn new(connection: Option<&ConnectionConfig>) -> Self {
+    pub fn new(connection: Option<&ConnectionConfig>, ui_config: &UiConfig) -> Self {
         let connection_info = connection.map(|c| c.display_string_redacted());
 
         // Add welcome message
@@ -447,9 +451,11 @@ impl App {
             rerun_requested: false,
             show_help: false,
             ring_bell: false,
-            is_connected: true,      // Assume connected initially
-            vim_mode_enabled: false, // Vim mode disabled by default
-            show_row_numbers: false, // Row numbers disabled by default
+            is_connected: true,
+            vim_mode_enabled: ui_config.vim_mode,
+            show_row_numbers: ui_config.row_numbers,
+            bell_on_completion: ui_config.bell_on_completion,
+            bell_threshold_seconds: ui_config.bell_threshold_seconds,
             text_selection: None,
             chat_area: None,
             banner_area: None,
@@ -678,6 +684,14 @@ impl App {
 
     /// Adds a query to the log.
     pub fn add_query_log(&mut self, entry: QueryLogEntry) {
+        // Check if query was long enough to trigger bell
+        if self.bell_on_completion
+            && entry.status == QueryStatus::Success
+            && entry.execution_time.as_secs() >= self.bell_threshold_seconds
+        {
+            self.request_bell();
+        }
+
         // Insert at the beginning (most recent first)
         self.query_log.insert(0, entry);
         // Update selection to stay on the same item or select the new one
@@ -775,6 +789,9 @@ impl App {
         }
 
         if let Some(item) = self.sql_completion.selected_item().cloned() {
+            // Record this completion for recency ranking
+            self.sql_completion.record_completion(&item.text);
+
             // Calculate the replacement range
             let filter_len = self.sql_completion.filter.len();
             let sql_cursor = self.sql_cursor();
@@ -839,13 +856,16 @@ impl App {
                 }
 
                 match key.code {
-                    // Ctrl+C: copy selection if present, otherwise exit
+                    // Ctrl+C: close palette if visible, copy selection if present, otherwise exit
                     KeyCode::Char('c')
                         if key
                             .modifiers
                             .contains(crossterm::event::KeyModifiers::CONTROL) =>
                     {
-                        if self.text_selection.is_some() {
+                        if self.command_palette.visible {
+                            self.command_palette.close();
+                            self.input.clear();
+                        } else if self.text_selection.is_some() {
                             self.copy_selection();
                         } else {
                             self.running = false;
@@ -1020,6 +1040,20 @@ impl App {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // Check if click is on the "New messages" banner
+                if let Some(banner) = self.banner_area {
+                    if mouse.column >= banner.x
+                        && mouse.column < banner.x + banner.width
+                        && mouse.row >= banner.y
+                        && mouse.row < banner.y + banner.height
+                    {
+                        // Jump to bottom and clear new messages flag
+                        self.chat_scroll = 0;
+                        self.has_new_messages = false;
+                        return;
+                    }
+                }
+
                 // Check if click is within chat area
                 if let Some(area) = self.chat_area {
                     if mouse.column >= area.x
@@ -1173,6 +1207,7 @@ impl App {
                     .contains(crossterm::event::KeyModifiers::CONTROL)
                 && self.is_sql_mode()
             {
+                self.sql_completion.force_open();
                 self.update_sql_completions();
                 return true;
             }
@@ -1274,7 +1309,7 @@ impl App {
             }
             // Text input
             KeyCode::Char(c) => {
-                if c == '/' && self.input.is_empty() {
+                if c == '/' && self.input.cursor == 0 {
                     self.input.insert(c);
                     self.command_palette.open();
                 } else {
@@ -1682,7 +1717,7 @@ impl App {
             // Text input
             KeyCode::Char(c) => {
                 // Check if this triggers command palette
-                if c == '/' && self.input.is_empty() {
+                if c == '/' && self.input.cursor == 0 {
                     self.input.insert(c);
                     self.command_palette.open();
                 } else {
@@ -1819,7 +1854,7 @@ mod tests {
 
     #[test]
     fn test_app_new() {
-        let app = App::new(None);
+        let app = App::new(None, &UiConfig::default());
         assert!(app.running);
         assert_eq!(app.focus, Focus::Input);
         assert!(app.input.is_empty());
