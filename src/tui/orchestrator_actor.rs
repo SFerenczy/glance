@@ -948,7 +948,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // TODO: Fix race condition - requests process immediately before queueing
     async fn test_queue_fifo_ordering() {
         let (handle, actor, _progress_rx, mut response_rx) = create_test_actor();
 
@@ -993,7 +992,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // TODO: Fix race condition - requests process immediately before queueing
     async fn test_queue_max_depth() {
         let (handle, actor, _progress_rx, mut response_rx) = create_test_actor();
 
@@ -1043,7 +1041,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // TODO: Fix race condition - requests process immediately before queueing
     async fn test_cancel_queued_request() {
         let (handle, actor, _progress_rx, mut response_rx) = create_test_actor();
 
