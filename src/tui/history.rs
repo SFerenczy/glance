@@ -123,6 +123,11 @@ impl InputHistory {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// Returns a reference to all history entries (oldest first).
+    pub fn entries(&self) -> &[String] {
+        &self.entries
+    }
 }
 
 #[cfg(test)]

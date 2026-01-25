@@ -35,6 +35,7 @@ use std::io::{self, Stdout};
 use std::panic;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use orchestrator_actor::{OrchestratorActor, OrchestratorHandle, OrchestratorResponse, RequestId};
@@ -290,6 +291,29 @@ impl Tui {
 
         let mut app_state = App::new(connection, ui_config);
 
+        // Check if database was recovered from corruption and show toast
+        if let Some(state_db) = orchestrator.state_db() {
+            if state_db.was_recovered() {
+                app_state.show_toast(
+                    "⚠️  Database recovered from corruption. Backup saved to state.db.bak",
+                );
+                // Extend toast duration for important message
+                if let Some((_, expiry)) = &mut app_state.toast {
+                    *expiry = Instant::now() + Duration::from_secs(10);
+                }
+            }
+
+            // Initialize secret storage status and show warning toast if needed
+            app_state.secret_storage_status = state_db.secret_storage_status();
+            if app_state.secret_storage_status
+                == crate::persistence::SecretStorageStatus::PlaintextConsented
+            {
+                app_state.show_toast(
+                    "⚠️  Secrets in plaintext (keyring unavailable). Press 'w' to dismiss.",
+                );
+            }
+        }
+
         // Channel for progress updates and orchestrator responses
         let (progress_tx, mut progress_rx) = mpsc::channel::<ProgressMessage>(32);
         let (response_tx, mut response_rx) = mpsc::channel::<OrchestratorResponse>(32);
@@ -510,6 +534,15 @@ impl Tui {
                     }
 
                     if let Some(input) = app_state.submit_input() {
+                        // Intercept /llm key command to trigger masked input mode
+                        if input.trim() == "/llm key" {
+                            app_state.start_masked_input(
+                                "/llm key".to_string(),
+                                "Enter API Key (input hidden)".to_string(),
+                            );
+                            return;
+                        }
+
                         // Add user message to chat
                         app_state.add_message(app::ChatMessage::User(input.clone()));
                         app_state.is_processing = true;
@@ -534,6 +567,15 @@ impl Tui {
                 // Check if command palette requested immediate submission
                 if app_state.command_palette.take_submit_request() {
                     if let Some(input) = app_state.submit_input() {
+                        // Intercept /llm key command to trigger masked input mode
+                        if input.trim() == "/llm key" {
+                            app_state.start_masked_input(
+                                "/llm key".to_string(),
+                                "Enter API Key (input hidden)".to_string(),
+                            );
+                            return;
+                        }
+
                         app_state.add_message(app::ChatMessage::User(input.clone()));
                         app_state.is_processing = true;
 

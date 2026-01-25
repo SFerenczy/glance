@@ -227,7 +227,8 @@ mod tests {
     fn test_cancelled_entry_renders_status() {
         let entry =
             QueryLogEntry::cancelled_with_source("SELECT 1".to_string(), QuerySource::Manual);
-        let sidebar = Sidebar::new(&[entry], None, false);
+        let entries = [entry];
+        let sidebar = Sidebar::new(&entries, None, false);
         let area = Rect::new(0, 0, 50, 6);
         let mut buf = Buffer::empty(area);
 

@@ -984,6 +984,11 @@ impl Orchestrator {
         self.state_db.as_ref().map(|db| db.secret_storage_status())
     }
 
+    /// Returns a reference to the state database.
+    pub fn state_db(&self) -> Option<&Arc<StateDb>> {
+        self.state_db.as_ref()
+    }
+
     /// Handles /connect <name> command - switch to a saved connection.
     async fn handle_connect(&mut self, args: &str) -> Result<InputResult> {
         if args.is_empty() {

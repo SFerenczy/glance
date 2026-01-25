@@ -32,6 +32,7 @@ pub struct InputBar<'a> {
     vim_mode_enabled: bool,
     disabled: bool,
     custom_prompt: Option<&'a str>,
+    masked: bool,
 }
 
 impl<'a> InputBar<'a> {
@@ -44,6 +45,7 @@ impl<'a> InputBar<'a> {
         vim_mode_enabled: bool,
         disabled: bool,
         custom_prompt: Option<&'a str>,
+        masked: bool,
     ) -> Self {
         Self {
             text,
@@ -53,6 +55,7 @@ impl<'a> InputBar<'a> {
             vim_mode_enabled,
             disabled,
             custom_prompt,
+            masked,
         }
     }
 }
@@ -110,11 +113,17 @@ impl Widget for InputBar<'_> {
             calculate_scroll_offset(self.cursor, self.text.len(), available_width)
         };
 
-        // Get the visible portion of text
-        let visible_text = if self.disabled {
-            ""
-        } else if scroll_offset < self.text.len() {
-            &self.text[scroll_offset..]
+        // Get the visible portion of text (masked or plain)
+        let display_text = if self.disabled {
+            String::new()
+        } else if self.masked {
+            "•".repeat(self.text.len())
+        } else {
+            self.text.to_string()
+        };
+
+        let visible_text = if scroll_offset < display_text.len() {
+            &display_text[scroll_offset..]
         } else {
             ""
         };
@@ -146,17 +155,25 @@ mod tests {
 
     #[test]
     fn test_input_bar_creation() {
-        let input = InputBar::new("hello", 5, true, InputMode::Insert, false, false, None);
+        let input = InputBar::new("hello", 5, true, InputMode::Insert, false, false, None, false);
         assert_eq!(input.text, "hello");
         assert_eq!(input.cursor, 5);
         assert!(input.focused);
         assert!(!input.vim_mode_enabled);
+        assert!(!input.disabled);
+        assert!(!input.masked);
     }
 
     #[test]
     fn test_input_bar_with_vim_mode() {
-        let input = InputBar::new("test", 2, true, InputMode::Normal, true, false, None);
+        let input = InputBar::new("test", 2, true, InputMode::Normal, true, false, None, false);
         assert!(input.vim_mode_enabled);
+    }
+
+    #[test]
+    fn test_input_bar_masked() {
+        let input = InputBar::new("password", 8, true, InputMode::Insert, false, false, None, true);
+        assert!(input.masked);
     }
 
     #[test]

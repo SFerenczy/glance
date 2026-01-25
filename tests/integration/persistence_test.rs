@@ -8,10 +8,11 @@ use db_glance::persistence::{
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
-async fn create_test_db() -> StateDb {
+async fn create_test_db() -> (StateDb, tempfile::TempDir) {
     let dir = tempdir().unwrap();
     let path = dir.path().join("test_state.db");
-    StateDb::open(&path).await.unwrap()
+    let db = StateDb::open(&path).await.unwrap();
+    (db, dir)
 }
 
 #[tokio::test]
@@ -26,7 +27,7 @@ async fn test_state_db_creation() {
 
 #[tokio::test]
 async fn test_connection_crud() {
-    let db = create_test_db().await;
+    let (db, _dir) = create_test_db().await;
 
     let profile = ConnectionProfile {
         name: "test_conn".to_string(),
@@ -73,7 +74,7 @@ async fn test_connection_crud() {
 
 #[tokio::test]
 async fn test_query_history() {
-    let db = create_test_db().await;
+    let (db, _dir) = create_test_db().await;
 
     let profile = ConnectionProfile {
         name: "hist_conn".to_string(),
@@ -135,7 +136,7 @@ async fn test_query_history() {
 
 #[tokio::test]
 async fn test_saved_queries_with_tags() {
-    let db = create_test_db().await;
+    let (db, _dir) = create_test_db().await;
 
     let profile = ConnectionProfile {
         name: "sq_conn".to_string(),
@@ -176,7 +177,7 @@ async fn test_saved_queries_with_tags() {
     assert!(query.tags.contains(&"users".to_string()));
 
     let filter = SavedQueryFilter {
-        tag: Some("users".to_string()),
+        tags: Some(vec!["users".to_string()]),
         ..Default::default()
     };
     let by_tag = persistence::saved_queries::list_saved_queries(db.pool(), &filter)
@@ -207,7 +208,7 @@ async fn test_saved_queries_with_tags() {
 
 #[tokio::test]
 async fn test_llm_settings() {
-    let db = create_test_db().await;
+    let (db, _dir) = create_test_db().await;
 
     let settings = persistence::llm_settings::get_llm_settings(db.pool())
         .await
@@ -238,7 +239,7 @@ async fn test_llm_settings() {
 
 #[tokio::test]
 async fn test_invalid_provider_rejected() {
-    let db = create_test_db().await;
+    let (db, _dir) = create_test_db().await;
 
     let result = persistence::llm_settings::set_provider(db.pool(), "invalid").await;
     assert!(result.is_err());
@@ -249,7 +250,7 @@ async fn test_invalid_provider_rejected() {
 
 #[tokio::test]
 async fn test_duplicate_connection_rejected() {
-    let db = create_test_db().await;
+    let (db, _dir) = create_test_db().await;
 
     let profile = ConnectionProfile {
         name: "dup_conn".to_string(),

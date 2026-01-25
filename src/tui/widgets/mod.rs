@@ -7,6 +7,7 @@ pub mod command_palette;
 pub mod confirm;
 pub mod header;
 pub mod help;
+pub mod history_selection;
 pub mod input;
 pub mod query_detail;
 pub mod sidebar;

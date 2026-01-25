@@ -69,7 +69,7 @@ fn test_query_delete() {
         "--headless",
         "--mock-db",
         "--events",
-        "type:/sql SELECT 1,key:enter,wait:100ms,type:/savequery to_delete,key:enter,wait:100ms,type:/query delete to_delete,key:enter,wait:100ms,assert:contains:Saved query 'to_delete' deleted",
+        "type:/sql SELECT 1,key:enter,wait:100ms,type:/savequery to_delete,key:enter,wait:100ms,type:/query delete to_delete --confirm,key:enter,wait:100ms,assert:contains:Saved query 'to_delete' deleted",
         "--output",
         "json",
     ]);

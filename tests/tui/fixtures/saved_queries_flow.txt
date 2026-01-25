@@ -55,7 +55,7 @@ wait:100ms
 assert:contains:count_orders (test)
 
 # Scenario: Delete a saved query
-type:/query delete count_orders
+type:/query delete count_orders --confirm
 key:enter
 wait:100ms
 assert:contains:Saved query 'count_orders' deleted

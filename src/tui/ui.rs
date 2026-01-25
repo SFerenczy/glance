@@ -4,8 +4,8 @@
 
 use super::app::{App, Focus};
 use super::widgets::{
-    chat, command_palette, confirm, header, help, input, query_detail, sidebar, sql_completion,
-    toast,
+    chat, command_palette, confirm, header, help, history_selection, input, query_detail, sidebar,
+    sql_completion, toast,
 };
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -87,6 +87,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(popup, popup_area);
     }
 
+    // Render history selection popup if visible
+    if let Some(ref state) = app.history_selection {
+        let popup_area = history_selection::HistorySelectionPopup::popup_area(input_area);
+        let popup = history_selection::HistorySelectionPopup::new(&state.entries, state.selected);
+        frame.render_widget(popup, popup_area);
+    }
+
     // Render toast notification if present
     if let Some((message, _)) = &app.toast {
         let toast_area = toast::Toast::area(area);
@@ -104,11 +111,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 /// Renders the header bar.
 fn render_header(frame: &mut Frame, area: Rect, app: &App) {
+    use crate::persistence::SecretStorageStatus;
+    let show_warning = !app.secret_warning_dismissed
+        && app.secret_storage_status == SecretStorageStatus::PlaintextConsented;
     let widget = header::Header::new(
         app.connection_info.as_deref(),
         app.spinner.as_ref(),
         app.is_connected,
         app.queue_depth,
+        show_warning,
     );
     frame.render_widget(widget, area);
 }
@@ -175,14 +186,22 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         None
     };
 
+    // Check if in masked input mode
+    let (text, cursor, masked) = if let Some(ref state) = app.masked_input {
+        (state.value.as_str(), state.cursor, true)
+    } else {
+        (app.input.text.as_str(), app.input.cursor, false)
+    };
+
     let widget = input::InputBar::new(
-        &app.input.text,
-        app.input.cursor,
+        text,
+        cursor,
         focused,
         app.input_mode,
         app.vim_mode_enabled,
         disabled,
         custom_prompt,
+        masked,
     );
     frame.render_widget(widget, area);
 
@@ -191,11 +210,10 @@ fn render_input(frame: &mut Frame, area: Rect, app: &mut App) {
         // Calculate scroll offset to match the widget's rendering
         // Border left (1) + prompt "> " (2) + border right (1) + cursor space (1) = 5
         let available_width = area.width.saturating_sub(5) as usize;
-        let scroll_offset =
-            input::calculate_scroll_offset(app.input.cursor, app.input.text.len(), available_width);
+        let scroll_offset = input::calculate_scroll_offset(cursor, text.len(), available_width);
 
         // Account for border (1) and prompt "> " (2), minus scroll offset
-        let cursor_x = area.x + 1 + 2 + (app.input.cursor - scroll_offset) as u16;
+        let cursor_x = area.x + 1 + 2 + (cursor - scroll_offset) as u16;
         let cursor_y = area.y + 1;
         frame.set_cursor_position((cursor_x, cursor_y));
     }

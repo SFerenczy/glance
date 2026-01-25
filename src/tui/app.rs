@@ -9,6 +9,7 @@ use super::widgets::sql_completion::SqlCompletionState;
 use crate::config::{ConnectionConfig, UiConfig};
 use crate::db::QueryResult;
 use crate::db::Schema;
+use crate::persistence::SecretStorageStatus;
 use std::time::{Duration, Instant};
 
 /// Status of an executed query.
@@ -410,6 +411,14 @@ pub struct App {
     streaming_assistant_index: Option<usize>,
     /// Index of the result message to highlight and expiry time.
     pub result_highlight: Option<(usize, Instant)>,
+    /// Whether the secret storage warning badge has been dismissed.
+    pub secret_warning_dismissed: bool,
+    /// Current secret storage status (for warning badge).
+    pub secret_storage_status: SecretStorageStatus,
+    /// Masked input state for sensitive data entry.
+    pub masked_input: Option<MaskedInputState>,
+    /// History selection popup state.
+    pub history_selection: Option<HistorySelectionState>,
 }
 
 /// A multi-line paste that may need user confirmation.
@@ -467,6 +476,28 @@ pub struct PendingRequestView {
     pub status: RequestStatus,
 }
 
+/// State for masked input mode (for sensitive data like API keys).
+#[derive(Debug, Clone)]
+pub struct MaskedInputState {
+    /// The actual value being entered (hidden from display).
+    pub value: String,
+    /// Cursor position in the value.
+    pub cursor: usize,
+    /// The command that triggered masked input (e.g., "/llm key").
+    pub command: String,
+    /// Prompt to display to the user.
+    pub prompt: String,
+}
+
+/// State for history selection popup.
+#[derive(Debug, Clone)]
+pub struct HistorySelectionState {
+    /// History entries to display (in reverse chronological order).
+    pub entries: Vec<String>,
+    /// Currently selected index.
+    pub selected: usize,
+}
+
 impl App {
     /// Creates a new App instance.
     pub fn new(connection: Option<&ConnectionConfig>, ui_config: &UiConfig) -> Self {
@@ -519,6 +550,10 @@ impl App {
             queue_max: crate::tui::orchestrator_actor::MAX_QUEUE_DEPTH,
             streaming_assistant_index: None,
             result_highlight: None,
+            secret_warning_dismissed: false,
+            secret_storage_status: SecretStorageStatus::Secure,
+            masked_input: None,
+            history_selection: None,
         }
     }
 
@@ -526,6 +561,130 @@ impl App {
     pub fn show_toast(&mut self, message: impl Into<String>) {
         let expiry = Instant::now() + Duration::from_secs(3);
         self.toast = Some((message.into(), expiry));
+    }
+
+    /// Dismisses the secret storage warning badge.
+    pub fn dismiss_secret_warning(&mut self) {
+        self.secret_warning_dismissed = true;
+        self.show_toast("Warning dismissed. Check /llm key for details.");
+    }
+
+    /// Starts masked input mode for sensitive data entry.
+    pub fn start_masked_input(&mut self, command: String, prompt: String) {
+        self.masked_input = Some(MaskedInputState {
+            value: String::new(),
+            cursor: 0,
+            command,
+            prompt,
+        });
+        self.input.clear();
+    }
+
+    /// Takes the masked input and returns the command with value.
+    pub fn take_masked_input(&mut self) -> Option<(String, String)> {
+        self.masked_input
+            .take()
+            .map(|state| (state.command, state.value))
+    }
+
+    /// Cancels masked input mode without returning the value.
+    pub fn cancel_masked_input(&mut self) {
+        self.masked_input = None;
+    }
+
+    /// Handles key events in masked input mode.
+    /// Returns true if the key was handled.
+    pub fn handle_masked_input_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+
+        if let Some(state) = &mut self.masked_input {
+            match key.code {
+                KeyCode::Esc => {
+                    self.cancel_masked_input();
+                    return true;
+                }
+                KeyCode::Enter => {
+                    // Enter will be handled by submit_input
+                    return false;
+                }
+                KeyCode::Char(c) => {
+                    state.value.insert(state.cursor, c);
+                    state.cursor += 1;
+                    return true;
+                }
+                KeyCode::Backspace => {
+                    if state.cursor > 0 {
+                        state.cursor -= 1;
+                        state.value.remove(state.cursor);
+                    }
+                    return true;
+                }
+                KeyCode::Left => {
+                    if state.cursor > 0 {
+                        state.cursor -= 1;
+                    }
+                    return true;
+                }
+                KeyCode::Right => {
+                    if state.cursor < state.value.len() {
+                        state.cursor += 1;
+                    }
+                    return true;
+                }
+                _ => return true, // Consume all other keys in masked mode
+            }
+        }
+        false
+    }
+
+    /// Opens the history selection popup.
+    pub fn open_history_selection(&mut self) {
+        let entries: Vec<String> = self.input_history.entries().to_vec();
+        if !entries.is_empty() {
+            self.history_selection = Some(HistorySelectionState {
+                entries,
+                selected: 0,
+            });
+        }
+    }
+
+    /// Closes the history selection popup.
+    pub fn close_history_selection(&mut self) {
+        self.history_selection = None;
+    }
+
+    /// Moves selection to previous history entry.
+    pub fn history_select_previous(&mut self) {
+        if let Some(state) = &mut self.history_selection {
+            if !state.entries.is_empty() {
+                state.selected = state.selected.saturating_sub(1);
+            }
+        }
+    }
+
+    /// Moves selection to next history entry.
+    pub fn history_select_next(&mut self) {
+        if let Some(state) = &mut self.history_selection {
+            if !state.entries.is_empty() {
+                state.selected = (state.selected + 1).min(state.entries.len() - 1);
+            }
+        }
+    }
+
+    /// Loads the selected history entry into the input bar and closes the popup.
+    /// Returns the selected entry if any.
+    pub fn load_selected_history(&mut self) -> Option<String> {
+        if let Some(state) = self.history_selection.take() {
+            if let Some(entry) = state.entries.get(state.selected).cloned() {
+                self.input.text = entry.clone();
+                self.input.cursor = entry.len();
+                Some(entry)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 
     /// Starts the LLM thinking spinner.
@@ -696,22 +855,21 @@ impl App {
             return;
         }
 
-        // Find the last assistant message and append to it
-        for message in self.messages.iter_mut().rev() {
-            if let ChatMessage::Assistant(content) = message {
-                content.push_str(token);
-                if self.chat_scroll > 0 {
-                    self.has_new_messages = true;
-                }
-                return;
+        let index = match self.streaming_assistant_index {
+            Some(idx) if matches!(self.messages.get(idx), Some(ChatMessage::Assistant(_))) => idx,
+            _ => {
+                let idx = self.messages.len();
+                self.messages.push(ChatMessage::Assistant(String::new()));
+                self.streaming_assistant_index = Some(idx);
+                idx
             }
-        }
+        };
 
-        // No assistant message found, create one
-        self.messages
-            .push(ChatMessage::Assistant(token.to_string()));
-        if self.chat_scroll > 0 {
-            self.has_new_messages = true;
+        if let Some(ChatMessage::Assistant(content)) = self.messages.get_mut(index) {
+            content.push_str(token);
+            if self.chat_scroll > 0 {
+                self.has_new_messages = true;
+            }
         }
     }
 
@@ -1431,9 +1589,52 @@ impl App {
         }
     }
 
+    /// Handles history selection input. Returns true if event was consumed.
+    fn handle_history_selection_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+
+        if self.history_selection.is_none() {
+            // Ctrl+R opens history selection
+            if key.code == KeyCode::Char('r')
+                && key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+            {
+                self.open_history_selection();
+                return true;
+            }
+            return false;
+        }
+
+        match key.code {
+            KeyCode::Esc => {
+                self.close_history_selection();
+                true
+            }
+            KeyCode::Up => {
+                self.history_select_previous();
+                true
+            }
+            KeyCode::Down => {
+                self.history_select_next();
+                true
+            }
+            KeyCode::Enter => {
+                self.load_selected_history();
+                true
+            }
+            _ => true, // Consume all other keys when popup is visible
+        }
+    }
+
     /// Handles key events in standard mode (vim mode disabled).
     fn handle_standard_input_key(&mut self, key: crossterm::event::KeyEvent) {
         use crossterm::event::KeyCode;
+
+        // Handle masked input mode first
+        if self.handle_masked_input_key(key) {
+            return;
+        }
 
         // Handle pending paste confirmation first
         if self.has_pending_paste() {
@@ -1461,6 +1662,11 @@ impl App {
 
         // Handle SQL completion if visible
         if self.handle_sql_completion_key(key) {
+            return;
+        }
+
+        // Handle history selection if visible or Ctrl+R
+        if self.handle_history_selection_key(key) {
             return;
         }
 
@@ -1599,6 +1805,14 @@ impl App {
             // Toggle help overlay
             KeyCode::Char('?') => {
                 self.show_help = !self.show_help;
+            }
+            // Dismiss secret storage warning badge
+            KeyCode::Char('w') => {
+                if !self.secret_warning_dismissed
+                    && self.secret_storage_status == SecretStorageStatus::PlaintextConsented
+                {
+                    self.dismiss_secret_warning();
+                }
             }
             // Vim-style scrolling
             KeyCode::Char('j') => {
@@ -1953,6 +2167,11 @@ impl App {
 
     /// Submits the current input for processing.
     pub fn submit_input(&mut self) -> Option<String> {
+        // If in masked input mode, construct the command with the masked value
+        if let Some((command, value)) = self.take_masked_input() {
+            return Some(format!("{} {}", command, value));
+        }
+
         if self.input.is_empty() {
             None
         } else {
@@ -2274,5 +2493,103 @@ mod tests {
         let entry = app.selected_query_entry();
         assert!(entry.is_some());
         assert_eq!(entry.unwrap().sql, "SELECT 1");
+    }
+
+    #[test]
+    fn test_history_selection_navigation() {
+        let mut app = App::new(None);
+
+        // Add some history
+        app.input_history.push("query1".to_string());
+        app.input_history.push("query2".to_string());
+        app.input_history.push("query3".to_string());
+
+        // Open history selection
+        app.open_history_selection();
+        assert!(app.history_selection.is_some());
+        let state = app.history_selection.as_ref().unwrap();
+        assert_eq!(state.entries.len(), 3);
+        assert_eq!(state.selected, 0);
+
+        // Navigate down
+        app.history_select_next();
+        assert_eq!(app.history_selection.as_ref().unwrap().selected, 1);
+
+        // Navigate up
+        app.history_select_previous();
+        assert_eq!(app.history_selection.as_ref().unwrap().selected, 0);
+
+        // Close
+        app.close_history_selection();
+        assert!(app.history_selection.is_none());
+    }
+
+    #[test]
+    fn test_load_selected_history() {
+        let mut app = App::new(None);
+
+        // Add some history
+        app.input_history.push("SELECT 1".to_string());
+        app.input_history.push("SELECT 2".to_string());
+
+        // Open and select
+        app.open_history_selection();
+        app.history_select_next(); // Select second entry
+
+        // Load selected
+        let loaded = app.load_selected_history();
+        assert_eq!(loaded, Some("SELECT 2".to_string()));
+        assert_eq!(app.input.text, "SELECT 2");
+        assert_eq!(app.input.cursor, 8);
+        assert!(app.history_selection.is_none()); // Should close after loading
+    }
+
+    #[test]
+    fn test_masked_input_state() {
+        let mut app = App::new(None);
+
+        // Start masked input
+        app.start_masked_input("/llm key".to_string(), "Enter API Key".to_string());
+        assert!(app.masked_input.is_some());
+        let state = app.masked_input.as_ref().unwrap();
+        assert_eq!(state.command, "/llm key");
+        assert_eq!(state.value, "");
+        assert_eq!(state.cursor, 0);
+
+        // Cancel masked input
+        app.cancel_masked_input();
+        assert!(app.masked_input.is_none());
+    }
+
+    #[test]
+    fn test_masked_input_flow() {
+        let mut app = App::new(None);
+
+        // Start masked input
+        app.start_masked_input("/llm key".to_string(), "Enter API Key".to_string());
+
+        // Simulate typing (this would normally be done via handle_masked_input_key)
+        if let Some(state) = &mut app.masked_input {
+            state.value = "secret123".to_string();
+            state.cursor = 9;
+        }
+
+        // Submit
+        let result = app.submit_input();
+        assert_eq!(result, Some("/llm key secret123".to_string()));
+        assert!(app.masked_input.is_none()); // Should be cleared after submission
+    }
+
+    #[test]
+    fn test_secret_warning_dismiss() {
+        let mut app = App::new(None);
+
+        // Set up warning state
+        app.secret_storage_status = SecretStorageStatus::PlaintextConsented;
+        app.secret_warning_dismissed = false;
+
+        // Dismiss warning
+        app.dismiss_secret_warning();
+        assert!(app.secret_warning_dismissed);
     }
 }

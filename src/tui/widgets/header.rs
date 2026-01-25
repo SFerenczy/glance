@@ -17,6 +17,7 @@ pub struct Header<'a> {
     spinner: Option<&'a Spinner>,
     is_connected: bool,
     queue_depth: usize,
+    show_secret_warning: bool,
 }
 
 impl<'a> Header<'a> {
@@ -26,12 +27,14 @@ impl<'a> Header<'a> {
         spinner: Option<&'a Spinner>,
         is_connected: bool,
         queue_depth: usize,
+        show_secret_warning: bool,
     ) -> Self {
         Self {
             connection_info,
             spinner,
             is_connected,
             queue_depth,
+            show_secret_warning,
         }
     }
 }
@@ -50,8 +53,20 @@ impl Widget for Header<'_> {
 
         // Left side: app name and version
         let left_text = format!(" Glance v{}", env!("CARGO_PKG_VERSION"));
+        let left_text_len = left_text.len() as u16;
         let left_span = Span::styled(left_text, style);
         buf.set_span(area.x, area.y, &left_span, area.width);
+
+        // Warning badge if secrets are stored in plaintext
+        if self.show_secret_warning {
+            let warning_text = " ⚠️  Secrets in plaintext ";
+            let warning_x = area.x + left_text_len;
+            let warning_style = Style::default()
+                .bg(Color::Yellow)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD);
+            buf.set_string(warning_x, area.y, warning_text, warning_style);
+        }
 
         // Center: spinner if active
         if let Some(spinner) = self.spinner {
