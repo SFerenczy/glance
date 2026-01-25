@@ -85,6 +85,8 @@ pub struct Tui {
     queue_depth: usize,
     /// Pending resize event (dimensions and timestamp) for debouncing.
     pending_resize: Option<(u16, u16, std::time::Instant)>,
+    /// Number of reconnection attempts made.
+    reconnect_attempts: usize,
 }
 
 impl Tui {
@@ -105,6 +107,7 @@ impl Tui {
             pending_cancellations: std::collections::HashMap::new(),
             queue_depth: 0,
             pending_resize: None,
+            reconnect_attempts: 0,
         })
     }
 
@@ -121,6 +124,21 @@ impl Tui {
         if let Some(token) = self.pending_cancellations.remove(&id) {
             token.cancel();
         }
+    }
+
+    /// Cleans up pending state when connection is lost.
+    fn cleanup_on_disconnect(&mut self, app_state: &mut App) {
+        // Cancel all pending tokens
+        for token in self.pending_cancellations.values() {
+            token.cancel();
+        }
+
+        // Mark all pending requests as cancelled
+        for id in app_state.pending_order.clone() {
+            app_state.cancel_request(id);
+        }
+
+        self.pending_cancellations.clear();
     }
 
     /// Returns a clone of the shutdown flag for use in async tasks.
@@ -362,8 +380,33 @@ impl Tui {
                 }
 
                 // Handle orchestrator responses
-                Some(response) = response_rx.recv() => {
-                    self.handle_orchestrator_response(response, app_state);
+                response_result = response_rx.recv() => {
+                    match response_result {
+                        Some(response) => {
+                            self.handle_orchestrator_response(response, app_state);
+                        }
+                        None => {
+                            // Channel closed - connection lost
+                            self.reconnect_attempts += 1;
+
+                            if self.reconnect_attempts <= 3 {
+                                warn!("Lost connection to orchestrator, attempt {}/3", self.reconnect_attempts);
+                                self.cleanup_on_disconnect(app_state);
+                                // In a production system, we could attempt to rebuild the actor here
+                                // For now, just show an error and continue
+                                app_state.add_message(app::ChatMessage::Error(
+                                    format!("Lost connection to orchestrator (attempt {}/3)", self.reconnect_attempts)
+                                ));
+                            } else {
+                                // Too many failures, give up
+                                self.cleanup_on_disconnect(app_state);
+                                app_state.add_message(app::ChatMessage::Error(
+                                    "Connection lost. Please restart the application.".to_string()
+                                ));
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 // Handle progress messages from the actor
