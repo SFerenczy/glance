@@ -120,7 +120,11 @@ impl<'a> ChatPanel<'a> {
                     lines.extend(self.render_assistant_message(text, available_width));
                 }
                 ChatMessage::Result(result) => {
-                    lines.extend(self.render_result_message(result, available_width, is_highlighted));
+                    lines.extend(self.render_result_message(
+                        result,
+                        available_width,
+                        is_highlighted,
+                    ));
                 }
                 ChatMessage::Error(text) => {
                     lines.extend(self.render_error_message(text, available_width));
@@ -521,7 +525,17 @@ mod tests {
     fn test_chat_panel_with_spinner() {
         let messages = vec![ChatMessage::User("Hello".to_string())];
         let spinner = Spinner::thinking();
-        let panel = ChatPanel::new(&messages, &[], 0, false, false, None, Some(&spinner), false, None);
+        let panel = ChatPanel::new(
+            &messages,
+            &[],
+            0,
+            false,
+            false,
+            None,
+            Some(&spinner),
+            false,
+            None,
+        );
         let lines = panel.render_messages(80);
 
         // Should have user message (2 lines) + spacing + spinner (1 line)

@@ -37,6 +37,7 @@ pub enum QuerySource {
 
 /// An entry in the query log.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct QueryLogEntry {
     /// The SQL query that was executed.
     pub sql: String,
@@ -478,6 +479,7 @@ pub struct PendingRequestView {
 
 /// State for masked input mode (for sensitive data like API keys).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct MaskedInputState {
     /// The actual value being entered (hidden from display).
     pub value: String,

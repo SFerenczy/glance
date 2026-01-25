@@ -119,7 +119,18 @@ fn classify_statement(statement: &Statement) -> (SafetyLevel, StatementType) {
     match statement {
         // Safe: read-only operations
         Statement::Query(_) => (SafetyLevel::Safe, StatementType::Select),
-        Statement::Explain { .. } => (SafetyLevel::Safe, StatementType::Explain),
+        Statement::Explain {
+            analyze, statement, ..
+        } => {
+            if *analyze {
+                // EXPLAIN ANALYZE executes the query - inherit inner statement's safety level
+                let (inner_level, _) = classify_statement(statement);
+                (inner_level, StatementType::Explain)
+            } else {
+                // Plain EXPLAIN only shows the plan, doesn't execute
+                (SafetyLevel::Safe, StatementType::Explain)
+            }
+        }
         Statement::ShowVariable { .. } => (SafetyLevel::Safe, StatementType::Show),
         Statement::ShowTables { .. } => (SafetyLevel::Safe, StatementType::Show),
         Statement::ShowColumns { .. } => (SafetyLevel::Safe, StatementType::Show),
@@ -228,6 +239,54 @@ mod tests {
         assert_classification(
             "EXPLAIN ANALYZE SELECT * FROM users",
             SafetyLevel::Safe,
+            StatementType::Explain,
+        );
+    }
+
+    #[test]
+    fn test_explain_delete_without_analyze_is_safe() {
+        // Without ANALYZE, EXPLAIN only shows the plan - doesn't execute
+        assert_classification(
+            "EXPLAIN DELETE FROM users",
+            SafetyLevel::Safe,
+            StatementType::Explain,
+        );
+    }
+
+    #[test]
+    fn test_explain_analyze_delete_is_destructive() {
+        // EXPLAIN ANALYZE executes the query - DELETE is destructive
+        assert_classification(
+            "EXPLAIN ANALYZE DELETE FROM users",
+            SafetyLevel::Destructive,
+            StatementType::Explain,
+        );
+    }
+
+    #[test]
+    fn test_explain_analyze_update_is_mutating() {
+        assert_classification(
+            "EXPLAIN ANALYZE UPDATE users SET name = 'x'",
+            SafetyLevel::Mutating,
+            StatementType::Explain,
+        );
+    }
+
+    #[test]
+    fn test_explain_analyze_insert_is_mutating() {
+        assert_classification(
+            "EXPLAIN ANALYZE INSERT INTO users VALUES (1)",
+            SafetyLevel::Mutating,
+            StatementType::Explain,
+        );
+    }
+
+    #[test]
+    fn test_explain_analyze_drop_is_destructive() {
+        // DROP TABLE is destructive
+        assert_classification(
+            "EXPLAIN ANALYZE DROP TABLE users",
+            SafetyLevel::Destructive,
             StatementType::Explain,
         );
     }

@@ -37,6 +37,7 @@ pub struct InputBar<'a> {
 
 impl<'a> InputBar<'a> {
     /// Creates a new input bar widget.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         text: &'a str,
         cursor: usize,
@@ -155,7 +156,16 @@ mod tests {
 
     #[test]
     fn test_input_bar_creation() {
-        let input = InputBar::new("hello", 5, true, InputMode::Insert, false, false, None, false);
+        let input = InputBar::new(
+            "hello",
+            5,
+            true,
+            InputMode::Insert,
+            false,
+            false,
+            None,
+            false,
+        );
         assert_eq!(input.text, "hello");
         assert_eq!(input.cursor, 5);
         assert!(input.focused);
@@ -172,7 +182,16 @@ mod tests {
 
     #[test]
     fn test_input_bar_masked() {
-        let input = InputBar::new("password", 8, true, InputMode::Insert, false, false, None, true);
+        let input = InputBar::new(
+            "password",
+            8,
+            true,
+            InputMode::Insert,
+            false,
+            false,
+            None,
+            true,
+        );
         assert!(input.masked);
     }
 

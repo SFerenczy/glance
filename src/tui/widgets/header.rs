@@ -101,9 +101,15 @@ impl Widget for Header<'_> {
             };
             let status_style = Style::default().bg(Color::Blue).fg(status_color);
 
-            right_spans.push(Span::styled(" ", Style::default().bg(Color::Blue).fg(Color::White)));
+            right_spans.push(Span::styled(
+                " ",
+                Style::default().bg(Color::Blue).fg(Color::White),
+            ));
             right_spans.push(Span::styled(status_dot, status_style));
-            right_spans.push(Span::styled(" ", Style::default().bg(Color::Blue).fg(Color::White)));
+            right_spans.push(Span::styled(
+                " ",
+                Style::default().bg(Color::Blue).fg(Color::White),
+            ));
             right_spans.push(Span::styled(status_text, status_style));
             right_spans.push(Span::styled(
                 format!(" [db: {}] ", info),

@@ -191,6 +191,31 @@ fn test_headless_esc_clears_input() {
 }
 
 #[test]
+fn test_explain_analyze_delete_requires_confirmation() {
+    // EXPLAIN ANALYZE DELETE executes the DELETE, so it should be classified as Destructive
+    // and require confirmation
+    let (code, stdout, stderr) = run_headless(&[
+        "--headless",
+        "--mock-db",
+        "--events",
+        "type:/sql EXPLAIN ANALYZE DELETE FROM users,key:enter,wait:100ms,assert:contains:Destructive",
+        "--output",
+        "frames",
+    ]);
+
+    if code != 0 {
+        eprintln!("STDOUT:\n{}", stdout);
+        eprintln!("STDERR:\n{}", stderr);
+    }
+
+    assert_eq!(
+        code, 0,
+        "Assertion failed - confirmation not shown. Output: {}",
+        stdout
+    );
+}
+
+#[test]
 fn test_headless_empty_result_with_column_headers() {
     // Test that empty results display column headers and "No results" message
     // Use SELECT * to avoid comma issues in event parsing
