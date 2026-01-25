@@ -124,6 +124,17 @@ Feature: Query execution
 - Update docs in the same commit as related code changes.
 - Before creating a commit run `just precommit` to run all checks.
 
+### Branch Merging
+
+- **Always rebase before merging**: Keep history linear by rebasing feature branches onto main before merging.
+- **Always use fast-forward merge**: After rebasing, merge with `--ff-only` to avoid merge commits.
+- **Workflow**:
+  1. `git rebase main` (while on feature branch)
+  2. Resolve any conflicts
+  3. `git checkout main`
+  4. `git merge --ff-only <feature-branch>`
+- This keeps the commit history clean and linear, making it easier to understand project evolution.
+
 ---
 
 ## Dependency Management
