@@ -42,7 +42,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 
 # SQL parsing (for safety classification)
-sqlparser = "0.50"
+sqlparser = "0.60"
 
 # Async utilities
 async-trait = "0.1"

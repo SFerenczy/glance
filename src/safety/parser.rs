@@ -3,7 +3,7 @@
 //! Uses sqlparser-rs with PostgreSQL dialect to parse SQL and classify
 //! statements by their safety level.
 
-use sqlparser::ast::Statement;
+use sqlparser::ast::{Query, Select, SetExpr, Statement, TableFactor, TableWithJoins};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 
@@ -117,8 +117,8 @@ fn level_priority(level: &SafetyLevel) -> u8 {
 /// Classifies a single parsed statement.
 fn classify_statement(statement: &Statement) -> (SafetyLevel, StatementType) {
     match statement {
-        // Safe: read-only operations
-        Statement::Query(_) => (SafetyLevel::Safe, StatementType::Select),
+        // Query: may contain data-modifying CTEs, so recurse
+        Statement::Query(query) => classify_query(query),
         Statement::Explain {
             analyze, statement, ..
         } => {
@@ -167,6 +167,116 @@ fn classify_statement(statement: &Statement) -> (SafetyLevel, StatementType) {
 
         // Conservative default: treat unknown statements as destructive
         _ => (SafetyLevel::Destructive, StatementType::Unknown),
+    }
+}
+
+/// Classifies a Query by recursively inspecting for data-modifying operations.
+/// Returns the most dangerous (SafetyLevel, StatementType) found.
+fn classify_query(query: &Query) -> (SafetyLevel, StatementType) {
+    let mut max_level = SafetyLevel::Safe;
+    let mut max_type = StatementType::Select;
+
+    // Check CTEs in WITH clause
+    if let Some(with) = &query.with {
+        for cte in &with.cte_tables {
+            let (level, stmt_type) = classify_query(&cte.query);
+            if level_priority(&level) > level_priority(&max_level) {
+                max_level = level;
+                max_type = stmt_type;
+            }
+        }
+    }
+
+    // Check the main query body
+    let (body_level, body_type) = classify_set_expr(&query.body);
+    if level_priority(&body_level) > level_priority(&max_level) {
+        max_level = body_level;
+        max_type = body_type;
+    }
+
+    (max_level, max_type)
+}
+
+/// Classifies a SetExpr, detecting mutations and recursing into nested queries.
+fn classify_set_expr(set_expr: &SetExpr) -> (SafetyLevel, StatementType) {
+    match set_expr {
+        // Direct mutations in CTE bodies (wrapped as Statement)
+        SetExpr::Delete(stmt) => classify_statement(stmt),
+        SetExpr::Update(stmt) => classify_statement(stmt),
+        SetExpr::Insert(stmt) => classify_statement(stmt),
+        SetExpr::Merge(stmt) => classify_statement(stmt),
+
+        // Nested query - recurse
+        SetExpr::Query(query) => classify_query(query),
+
+        // SELECT - check FROM clause for subqueries
+        SetExpr::Select(select) => classify_select(select),
+
+        // Set operations (UNION, INTERSECT, EXCEPT) - check both sides
+        SetExpr::SetOperation { left, right, .. } => {
+            let (left_level, left_type) = classify_set_expr(left);
+            let (right_level, right_type) = classify_set_expr(right);
+            if level_priority(&left_level) >= level_priority(&right_level) {
+                (left_level, left_type)
+            } else {
+                (right_level, right_type)
+            }
+        }
+
+        // Values, Table - safe (no subqueries possible)
+        SetExpr::Values(_) | SetExpr::Table(_) => (SafetyLevel::Safe, StatementType::Select),
+    }
+}
+
+/// Classifies a Select by checking its FROM clause for subqueries.
+fn classify_select(select: &Select) -> (SafetyLevel, StatementType) {
+    let mut max_level = SafetyLevel::Safe;
+    let mut max_type = StatementType::Select;
+
+    for table_with_joins in &select.from {
+        let (level, stmt_type) = classify_table_with_joins(table_with_joins);
+        if level_priority(&level) > level_priority(&max_level) {
+            max_level = level;
+            max_type = stmt_type;
+        }
+    }
+
+    (max_level, max_type)
+}
+
+/// Classifies a TableWithJoins, checking the main relation and all joins.
+fn classify_table_with_joins(twj: &TableWithJoins) -> (SafetyLevel, StatementType) {
+    let mut max_level = SafetyLevel::Safe;
+    let mut max_type = StatementType::Select;
+
+    // Check the main relation
+    let (level, stmt_type) = classify_table_factor(&twj.relation);
+    if level_priority(&level) > level_priority(&max_level) {
+        max_level = level;
+        max_type = stmt_type;
+    }
+
+    // Check all joins
+    for join in &twj.joins {
+        let (level, stmt_type) = classify_table_factor(&join.relation);
+        if level_priority(&level) > level_priority(&max_level) {
+            max_level = level;
+            max_type = stmt_type;
+        }
+    }
+
+    (max_level, max_type)
+}
+
+/// Classifies a TableFactor, recursing into derived tables (subqueries).
+fn classify_table_factor(factor: &TableFactor) -> (SafetyLevel, StatementType) {
+    match factor {
+        TableFactor::Derived { subquery, .. } => classify_query(subquery),
+        TableFactor::NestedJoin {
+            table_with_joins, ..
+        } => classify_table_with_joins(table_with_joins),
+        // Other variants (Table, TableFunction, etc.) are safe
+        _ => (SafetyLevel::Safe, StatementType::Select),
     }
 }
 
@@ -594,5 +704,86 @@ mod tests {
         let classifier = SqlClassifier::default();
         let result = classifier.classify("SELECT 1");
         assert_eq!(result.level, SafetyLevel::Safe);
+    }
+
+    // === Data-modifying CTE tests ===
+
+    #[test]
+    fn test_cte_with_delete_is_destructive() {
+        assert_classification(
+            "WITH deleted AS (DELETE FROM users RETURNING *) SELECT * FROM deleted",
+            SafetyLevel::Destructive,
+            StatementType::Delete,
+        );
+    }
+
+    #[test]
+    fn test_cte_with_update_is_mutating() {
+        assert_classification(
+            "WITH updated AS (UPDATE users SET active = false RETURNING *) SELECT * FROM updated",
+            SafetyLevel::Mutating,
+            StatementType::Update,
+        );
+    }
+
+    #[test]
+    fn test_cte_with_insert_is_mutating() {
+        assert_classification(
+            "WITH inserted AS (INSERT INTO logs (msg) VALUES ('x') RETURNING *) SELECT * FROM inserted",
+            SafetyLevel::Mutating,
+            StatementType::Insert,
+        );
+    }
+
+    #[test]
+    fn test_multiple_ctes_most_dangerous_wins() {
+        assert_classification(
+            "WITH a AS (SELECT 1), b AS (DELETE FROM users RETURNING *) SELECT * FROM a, b",
+            SafetyLevel::Destructive,
+            StatementType::Delete,
+        );
+    }
+
+    #[test]
+    fn test_mixed_mutations_delete_wins() {
+        assert_classification(
+            "WITH i AS (INSERT INTO logs VALUES ('x') RETURNING *), \
+                  d AS (DELETE FROM users RETURNING *) \
+             SELECT * FROM i, d",
+            SafetyLevel::Destructive,
+            StatementType::Delete,
+        );
+    }
+
+    #[test]
+    fn test_pure_cte_select_remains_safe() {
+        assert_classification(
+            "WITH active AS (SELECT * FROM users WHERE active) SELECT * FROM active",
+            SafetyLevel::Safe,
+            StatementType::Select,
+        );
+    }
+
+    #[test]
+    fn test_nested_subquery_with_delete_is_destructive() {
+        assert_classification(
+            "SELECT * FROM (WITH d AS (DELETE FROM users RETURNING *) SELECT * FROM d) sub",
+            SafetyLevel::Destructive,
+            StatementType::Delete,
+        );
+    }
+
+    #[test]
+    fn test_deeply_nested_mutation_detected() {
+        assert_classification(
+            "WITH outer AS (
+                SELECT * FROM (
+                    WITH inner AS (DELETE FROM users RETURNING *)
+                    SELECT * FROM inner
+                ) sub
+             ) SELECT * FROM outer",
+            SafetyLevel::Destructive,
+            StatementType::Delete,
+        );
     }
 }
