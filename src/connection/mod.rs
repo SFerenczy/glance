@@ -4,5 +4,4 @@
 
 pub mod manager;
 
-#[allow(unused_imports)]
-pub use manager::{ActiveConnection, ConnectionManager};
+pub use manager::ConnectionManager;

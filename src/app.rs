@@ -37,6 +37,7 @@ use crate::commands::{
     Command, CommandRouter,
 };
 use crate::config::ConnectionConfig;
+use crate::connection::ConnectionManager;
 use crate::db::{DatabaseClient, QueryResult, Schema};
 use crate::error::{GlanceError, Result};
 use crate::llm::{
@@ -94,8 +95,8 @@ pub enum InputResult {
 
 /// The main orchestrator that coordinates all components.
 pub struct Orchestrator {
-    /// Database client for executing queries.
-    db: Option<Box<dyn DatabaseClient>>,
+    /// Connection manager for database lifecycle.
+    connection_manager: ConnectionManager,
     /// LLM service for NL→SQL conversion.
     llm_service: LlmService,
     /// Database schema for LLM context.
@@ -104,8 +105,6 @@ pub struct Orchestrator {
     conversation: Conversation,
     /// State database for persistence.
     state_db: Option<Arc<StateDb>>,
-    /// Current connection name (if using a saved connection).
-    current_connection_name: Option<String>,
     /// Last executed SQL (for /savequery).
     last_executed_sql: Option<String>,
     /// Saved query ID for the next query execution (set by /usequery).
@@ -120,13 +119,16 @@ impl Orchestrator {
         llm: Box<dyn LlmClient>,
         schema: Schema,
     ) -> Self {
+        let connection_manager = match db {
+            Some(db) => ConnectionManager::with_connection(db, schema.clone(), None, None),
+            None => ConnectionManager::new(None),
+        };
         Self {
-            db,
+            connection_manager,
             llm_service: LlmService::new(llm),
             schema,
             conversation: Conversation::new(),
             state_db: None,
-            current_connection_name: None,
             last_executed_sql: None,
             pending_saved_query_id: None,
         }
@@ -189,13 +191,19 @@ impl Orchestrator {
             None
         };
 
+        let connection_manager = ConnectionManager::with_connection(
+            db,
+            schema.clone(),
+            current_connection_name,
+            state_db.clone(),
+        );
+
         Ok(Self {
-            db: Some(db),
+            connection_manager,
             llm_service: LlmService::new(llm),
             schema,
             conversation: Conversation::new(),
             state_db,
-            current_connection_name,
             last_executed_sql: None,
             pending_saved_query_id: None,
         })
@@ -204,12 +212,15 @@ impl Orchestrator {
     /// Creates an orchestrator with a mock LLM for testing.
     #[allow(dead_code)]
     pub fn with_mock_llm(db: Option<Box<dyn DatabaseClient>>, schema: Schema) -> Self {
+        let connection_manager = match db {
+            Some(db) => ConnectionManager::with_connection(db, schema.clone(), None, None),
+            None => ConnectionManager::new(None),
+        };
         Self {
-            db,
+            connection_manager,
             llm_service: LlmService::new(Box::new(MockLlmClient::new())),
             schema,
             state_db: None,
-            current_connection_name: None,
             last_executed_sql: None,
             conversation: Conversation::new(),
             pending_saved_query_id: None,
@@ -223,12 +234,20 @@ impl Orchestrator {
         schema: Schema,
         state_db: Arc<StateDb>,
     ) -> Self {
+        let connection_manager = match db {
+            Some(db) => ConnectionManager::with_connection(
+                db,
+                schema.clone(),
+                Some("test".to_string()),
+                Some(state_db.clone()),
+            ),
+            None => ConnectionManager::new(Some(state_db.clone())),
+        };
         Self {
-            db,
+            connection_manager,
             llm_service: LlmService::new(Box::new(MockLlmClient::new())),
             schema,
             state_db: Some(state_db),
-            current_connection_name: Some("test".to_string()),
             last_executed_sql: None,
             conversation: Conversation::new(),
             pending_saved_query_id: None,
@@ -286,12 +305,18 @@ impl Orchestrator {
             foreign_keys: vec![],
         };
 
+        let connection_manager = ConnectionManager::with_connection(
+            Box::new(MockDatabaseClient::new()),
+            schema.clone(),
+            Some("test".to_string()),
+            Some(state_db.clone()),
+        );
+
         Self {
-            db: Some(Box::new(MockDatabaseClient::new())),
+            connection_manager,
             llm_service: LlmService::new(Box::new(MockLlmClient::new())),
             schema,
             state_db: Some(state_db),
-            current_connection_name: Some("test".to_string()),
             last_executed_sql: None,
             conversation: Conversation::new(),
             pending_saved_query_id: None,
@@ -351,10 +376,10 @@ impl Orchestrator {
 
         // Build command context
         let ctx = CommandContext {
-            db: self.db.as_deref(),
+            db: self.connection_manager.db(),
             state_db: self.state_db.as_ref(),
             schema: &self.schema,
-            current_connection: self.current_connection_name.as_deref(),
+            current_connection: self.connection_manager.current_name(),
             last_executed_sql: self.last_executed_sql.as_deref(),
             current_input: None, // Commands don't have access to prior input state
         };
@@ -403,14 +428,14 @@ impl Orchestrator {
             Command::QueriesList(args) => queries::handle_queries_list(&ctx, &args).await,
             Command::UseQuery(name) => {
                 let state_db = require_state_db!(self);
-                queries::handle_usequery(&name, self.current_connection_name.as_deref(), &state_db)
+                queries::handle_usequery(&name, self.connection_manager.current_name(), &state_db)
                     .await
             }
             Command::QueryDelete(args) => {
                 let state_db = require_state_db!(self);
                 queries::handle_query_delete(
                     &args,
-                    self.current_connection_name.as_deref(),
+                    self.connection_manager.current_name(),
                     &state_db,
                 )
                 .await
@@ -491,7 +516,7 @@ impl Orchestrator {
 
     /// Handles /refresh schema command.
     async fn handle_refresh_schema(&mut self) -> Result<InputResult> {
-        let db = match &self.db {
+        let db = match self.connection_manager.db() {
             Some(db) => db,
             None => {
                 return Ok(InputResult::Messages(
@@ -702,7 +727,7 @@ impl Orchestrator {
     async fn handle_natural_language(&mut self, input: &str) -> Result<InputResult> {
         let tool_context = ToolContext {
             state_db: self.state_db.as_ref(),
-            current_connection: self.current_connection_name.as_deref(),
+            current_connection: self.connection_manager.current_name(),
         };
 
         let result = self
@@ -724,7 +749,7 @@ impl Orchestrator {
     {
         let tool_context = ToolContext {
             state_db: self.state_db.as_ref(),
-            current_connection: self.current_connection_name.as_deref(),
+            current_connection: self.connection_manager.current_name(),
         };
 
         let result = if Self::input_needs_saved_query_tool(input) {
@@ -867,7 +892,7 @@ impl Orchestrator {
         sql: &str,
         source: QuerySource,
     ) -> (Result<QueryResult>, QueryLogEntry) {
-        let db = match self.db.as_ref() {
+        let db = match self.connection_manager.db() {
             Some(db) => db,
             None => {
                 let entry = QueryLogEntry::error_with_source(
@@ -895,7 +920,9 @@ impl Orchestrator {
         };
 
         // Record to history only if we have a connection name (skip for unsaved connections)
-        if let (Some(state_db), Some(conn_name)) = (&self.state_db, &self.current_connection_name) {
+        if let (Some(state_db), Some(conn_name)) =
+            (&self.state_db, self.connection_manager.current_name())
+        {
             // Map QuerySource to SubmittedBy
             let submitted_by = match source {
                 QuerySource::Manual => SubmittedBy::User,
@@ -948,7 +975,7 @@ impl Orchestrator {
     ) -> (ChatMessage, Option<QueryLogEntry>) {
         // Record the cancellation in history if we have SQL and a connection
         if let (Some(sql), Some(state_db), Some(conn_name)) =
-            (sql, &self.state_db, &self.current_connection_name)
+            (sql, &self.state_db, self.connection_manager.current_name())
         {
             let _ = persistence::history::record_query(
                 state_db.pool(),
@@ -975,7 +1002,7 @@ impl Orchestrator {
     /// Returns the current connection name.
     #[allow(dead_code)]
     pub fn current_connection(&self) -> Option<&str> {
-        self.current_connection_name.as_deref()
+        self.connection_manager.current_name()
     }
 
     /// Returns the secret storage status.
@@ -998,61 +1025,8 @@ impl Orchestrator {
             ));
         }
 
-        let state_db = match &self.state_db {
-            Some(db) => Arc::clone(db),
-            None => {
-                return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error(
-                        "State database not available.".to_string(),
-                    )],
-                    None,
-                ));
-            }
-        };
-
-        let profile = persistence::connections::get_connection(state_db.pool(), args).await?;
-        let profile = match profile {
-            Some(p) => p,
-            None => {
-                return Ok(InputResult::Messages(
-                    vec![ChatMessage::Error(format!(
-                        "Connection '{}' not found.",
-                        args
-                    ))],
-                    None,
-                ));
-            }
-        };
-
-        let password = persistence::connections::get_connection_password(
-            state_db.pool(),
-            args,
-            state_db.secrets(),
-        )
-        .await?;
-
-        let config = ConnectionConfig {
-            backend: profile.backend,
-            host: profile.host.clone(),
-            port: profile.port,
-            database: Some(profile.database.clone()),
-            user: profile.username.clone(),
-            password: password.clone(),
-            sslmode: profile.sslmode.clone(),
-            extras: profile.extras.clone(),
-        };
-
-        tracing::debug!(
-            "Connecting with: host={:?}, port={}, db={:?}, user={:?}, has_password={}",
-            config.host,
-            config.port,
-            config.database,
-            config.user,
-            config.password.is_some()
-        );
-
-        let db = match crate::db::connect(&config).await {
-            Ok(db) => db,
+        let result = match self.connection_manager.switch_to(args).await {
+            Ok(result) => result,
             Err(e) => {
                 return Ok(InputResult::Messages(
                     vec![ChatMessage::Error(format!("Failed to connect: {}", e))],
@@ -1061,36 +1035,25 @@ impl Orchestrator {
             }
         };
 
-        let schema = db.introspect_schema().await?;
-
-        if let Some(old_db) = self.db.take() {
-            let _ = old_db.close().await;
-        }
-
-        self.db = Some(db);
-        self.schema = schema;
+        // Update Orchestrator-specific state
+        self.schema = result.schema.clone();
         self.conversation.clear();
-        self.current_connection_name = Some(args.to_string());
         self.last_executed_sql = None;
         self.pending_saved_query_id = None;
-
-        persistence::connections::touch_connection(state_db.pool(), args).await?;
 
         Ok(InputResult::ConnectionSwitch {
             messages: vec![ChatMessage::System(format!(
                 "Connected to {} ({})",
-                args, profile.database
+                result.name, result.database
             ))],
-            connection_info: format!("{} ({})", args, profile.database),
-            schema: self.schema.clone(),
+            connection_info: format!("{} ({})", result.name, result.database),
+            schema: result.schema,
         })
     }
 
     /// Closes the database connection and cleans up resources.
     pub async fn close(&mut self) -> Result<()> {
-        if let Some(db) = self.db.take() {
-            db.close().await?;
-        }
+        self.connection_manager.close().await?;
         if let Some(state_db) = self.state_db.take() {
             if let Ok(db) = Arc::try_unwrap(state_db) {
                 db.close().await;

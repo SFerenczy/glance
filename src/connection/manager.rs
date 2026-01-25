@@ -8,24 +8,22 @@ use crate::error::Result;
 use crate::persistence::{self, StateDb};
 
 /// An active database connection with its metadata.
-#[allow(dead_code)]
 pub struct ActiveConnection {
     /// Connection name (if using a saved connection).
     pub name: Option<String>,
     /// Database client.
     pub db: Box<dyn DatabaseClient>,
     /// Database schema.
+    #[allow(dead_code)] // Kept for API completeness
     pub schema: Schema,
 }
 
 /// Manages database connections and switching between them.
-#[allow(dead_code)]
 pub struct ConnectionManager {
     active: Option<ActiveConnection>,
     state_db: Option<Arc<StateDb>>,
 }
 
-#[allow(dead_code)]
 impl ConnectionManager {
     /// Creates a new connection manager.
     pub fn new(state_db: Option<Arc<StateDb>>) -> Self {
@@ -49,6 +47,7 @@ impl ConnectionManager {
     }
 
     /// Connect to a database using the given configuration.
+    #[allow(dead_code)] // Kept for API completeness
     pub async fn connect(&mut self, config: &ConnectionConfig, name: Option<String>) -> Result<()> {
         let db = crate::db::connect(config).await?;
         let schema = db.introspect_schema().await?;
@@ -121,6 +120,7 @@ impl ConnectionManager {
     }
 
     /// Get the current schema.
+    #[allow(dead_code)] // Kept for API completeness
     pub fn schema(&self) -> Option<&Schema> {
         self.active.as_ref().map(|c| &c.schema)
     }
@@ -131,6 +131,7 @@ impl ConnectionManager {
     }
 
     /// Check if there's an active connection.
+    #[allow(dead_code)] // Kept for API completeness
     pub fn is_connected(&self) -> bool {
         self.active.is_some()
     }
@@ -144,18 +145,19 @@ impl ConnectionManager {
     }
 
     /// Take ownership of the active connection.
+    #[allow(dead_code)] // Kept for API completeness
     pub fn take_active(&mut self) -> Option<ActiveConnection> {
         self.active.take()
     }
 
     /// Set a new active connection.
+    #[allow(dead_code)] // Kept for API completeness
     pub fn set_active(&mut self, conn: ActiveConnection) {
         self.active = Some(conn);
     }
 }
 
 /// Result of switching to a new connection.
-#[allow(dead_code)]
 pub struct ConnectionSwitchResult {
     /// Connection name.
     pub name: String,
