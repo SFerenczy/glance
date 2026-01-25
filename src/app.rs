@@ -1357,7 +1357,10 @@ mod tests {
         let mut orchestrator = Orchestrator::new(Some(db), llm, schema);
 
         // Natural language query that should auto-execute
-        let result = orchestrator.handle_input("show me all users").await.unwrap();
+        let result = orchestrator
+            .handle_input("show me all users")
+            .await
+            .unwrap();
 
         match result {
             InputResult::Messages(messages, Some(log_entry)) => {
@@ -1387,7 +1390,10 @@ mod tests {
         let mut orchestrator = Orchestrator::new(Some(db), llm, schema);
 
         // Natural language query that should auto-execute but fail
-        let result = orchestrator.handle_input("show me all users").await.unwrap();
+        let result = orchestrator
+            .handle_input("show me all users")
+            .await
+            .unwrap();
 
         match result {
             InputResult::Messages(messages, Some(log_entry)) => {
@@ -1400,7 +1406,11 @@ mod tests {
                 assert_eq!(log_entry.source, crate::tui::app::QuerySource::Auto);
                 assert_eq!(log_entry.status, crate::tui::app::QueryStatus::Error);
                 assert!(log_entry.error.is_some(), "Error field should be populated");
-                assert!(log_entry.error.as_ref().unwrap().contains("Mock database error"));
+                assert!(log_entry
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .contains("Mock database error"));
             }
             _ => panic!("Expected Messages result with log entry, got: {:?}", result),
         }
@@ -1418,7 +1428,10 @@ mod tests {
         let mut orchestrator = Orchestrator::new(Some(db), llm, schema);
 
         // Manual SQL query that should fail
-        let result = orchestrator.handle_input("/sql SELECT * FROM users").await.unwrap();
+        let result = orchestrator
+            .handle_input("/sql SELECT * FROM users")
+            .await
+            .unwrap();
 
         match result {
             InputResult::Messages(messages, Some(log_entry)) => {

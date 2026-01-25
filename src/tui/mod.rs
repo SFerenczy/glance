@@ -198,7 +198,11 @@ impl Tui {
     }
 
     /// Runs the main TUI event loop (synchronous version without orchestrator).
-    pub fn run(&mut self, connection: Option<&ConnectionConfig>, ui_config: &crate::config::UiConfig) -> Result<()> {
+    pub fn run(
+        &mut self,
+        connection: Option<&ConnectionConfig>,
+        ui_config: &crate::config::UiConfig,
+    ) -> Result<()> {
         // Set up panic hook to restore terminal on panic
         let original_hook = panic::take_hook();
         panic::set_hook(Box::new(move |panic_info| {
@@ -431,15 +435,16 @@ impl Tui {
         match event {
             CEvent::Key(key) if key.kind == KeyEventKind::Press => {
                 // During processing, only handle Ctrl+C for immediate cancellation
-                if app_state.is_processing {
-                    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                        // Cancel all operations (don't exit)
-                        let _ = handle.cancel_all().await;
-                        self.cancel_all_pending();
-                        return;
-                    }
-                    // Let Esc events pass through for double-Esc detection
+                if app_state.is_processing
+                    && key.code == KeyCode::Char('c')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    // Cancel all operations (don't exit)
+                    let _ = handle.cancel_all().await;
+                    self.cancel_all_pending();
+                    return;
                 }
+                // Let Esc events pass through for double-Esc detection during processing
 
                 // Handle confirmation dialog
                 if app_state.has_pending_query() {
@@ -801,13 +806,20 @@ impl Drop for Tui {
 }
 
 /// Runs the TUI application (synchronous, without orchestrator).
-pub fn run(connection: Option<&ConnectionConfig>, ui_config: &crate::config::UiConfig) -> Result<()> {
+pub fn run(
+    connection: Option<&ConnectionConfig>,
+    ui_config: &crate::config::UiConfig,
+) -> Result<()> {
     let mut tui = Tui::new()?;
     tui.run(connection, ui_config)
 }
 
 /// Runs the TUI application with full orchestrator integration.
-pub async fn run_async(connection: &ConnectionConfig, ui_config: &crate::config::UiConfig, llm_provider: LlmProvider) -> Result<()> {
+pub async fn run_async(
+    connection: &ConnectionConfig,
+    ui_config: &crate::config::UiConfig,
+    llm_provider: LlmProvider,
+) -> Result<()> {
     info!("Connecting to database...");
     let orchestrator = Orchestrator::connect(connection, llm_provider).await?;
     info!("Connected successfully");

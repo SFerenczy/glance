@@ -255,10 +255,14 @@ async fn test_empty_result_preserves_column_metadata() {
     assert_eq!(result.columns[1].name, "email");
 
     // Check column types are present (non-empty)
-    assert!(!result.columns[0].data_type.is_empty(),
-            "Column 'id' should have a data type");
-    assert!(!result.columns[1].data_type.is_empty(),
-            "Column 'email' should have a data type");
+    assert!(
+        !result.columns[0].data_type.is_empty(),
+        "Column 'id' should have a data type"
+    );
+    assert!(
+        !result.columns[1].data_type.is_empty(),
+        "Column 'email' should have a data type"
+    );
 
     // Verify execution time is recorded
     assert!(!result.execution_time.is_zero());

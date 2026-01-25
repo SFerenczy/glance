@@ -47,7 +47,9 @@ impl DatabaseClient for MockDatabaseClient {
             // Special case: queries with "WHERE 1 = 0" return empty results with column metadata
             if sql_upper.contains("WHERE 1 = 0") || sql_upper.contains("WHERE 1=0") {
                 // Extract column names from the SELECT clause for better testing
-                let columns = if sql_upper.contains("SELECT ID, EMAIL") || sql_upper.contains("SELECT ID,EMAIL") {
+                let columns = if sql_upper.contains("SELECT ID, EMAIL")
+                    || sql_upper.contains("SELECT ID,EMAIL")
+                {
                     vec![
                         ColumnInfo {
                             name: "id".to_string(),
@@ -59,12 +61,10 @@ impl DatabaseClient for MockDatabaseClient {
                         },
                     ]
                 } else {
-                    vec![
-                        ColumnInfo {
-                            name: "result".to_string(),
-                            data_type: "text".to_string(),
-                        }
-                    ]
+                    vec![ColumnInfo {
+                        name: "result".to_string(),
+                        data_type: "text".to_string(),
+                    }]
                 };
 
                 Ok(QueryResult {

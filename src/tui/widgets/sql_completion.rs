@@ -281,12 +281,6 @@ impl SqlCompletionState {
         self.force_opened = true;
     }
 
-    /// Closes the completion popup.
-    pub fn close(&mut self) {
-        self.visible = false;
-        self.force_opened = false;
-    }
-
     /// Records a completion as recently used for recency ranking.
     pub fn record_completion(&mut self, text: &str) {
         self.recent_completions.insert(text.to_lowercase());
@@ -440,6 +434,7 @@ impl SqlCompletionState {
     /// Closes the completion popup.
     pub fn close(&mut self) {
         self.visible = false;
+        self.force_opened = false;
         self.items.clear();
         self.selected = 0;
         self.filter.clear();
