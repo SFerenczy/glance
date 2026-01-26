@@ -1,19 +1,29 @@
 # Glance development commands
 
-# Start test database (shared across worktrees)
+# Compute worktree-specific container name and port
+# Each worktree gets its own database instance to allow parallel development
+_worktree_id := `basename "$PWD"`
+_port_hash := `echo "$PWD" | cksum | cut -d' ' -f1`
+export GLANCE_CONTAINER := "glance-postgres-" + _worktree_id
+export GLANCE_DB_PORT := `echo $(( 5433 + $(echo "$PWD" | cksum | cut -d' ' -f1) % 100 ))`
+
+# Start test database (unique per worktree)
 db:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Check if glance-postgres container is already running and healthy
-    if docker ps -q -f name=^glance-postgres$ -f health=healthy | grep -q .; then
+    echo "Using container: $GLANCE_CONTAINER on port $GLANCE_DB_PORT"
+    # Check if container is already running and healthy
+    if docker ps -q -f name="^${GLANCE_CONTAINER}$" -f health=healthy | grep -q .; then
         echo "Database already running"
-    elif docker ps -q -f name=^glance-postgres$ | grep -q .; then
+    elif docker ps -q -f name="^${GLANCE_CONTAINER}$" | grep -q .; then
         echo "Container running, waiting for healthy..."
-        until docker ps -q -f name=^glance-postgres$ -f health=healthy | grep -q .; do sleep 1; done
+        until docker ps -q -f name="^${GLANCE_CONTAINER}$" -f health=healthy | grep -q .; do sleep 1; done
     else
+        # Remove any stopped container with this name (e.g., from previous session)
+        docker rm -f "$GLANCE_CONTAINER" 2>/dev/null || true
         docker compose up -d postgres
         echo "Waiting for database to be ready..."
-        until docker ps -q -f name=^glance-postgres$ -f health=healthy | grep -q .; do sleep 1; done
+        until docker ps -q -f name="^${GLANCE_CONTAINER}$" -f health=healthy | grep -q .; do sleep 1; done
     fi
 
 # Stop test database
@@ -52,7 +62,7 @@ run:
 
 # Run with test database
 dev: db
-    DATABASE_URL="postgres://glance:glance@localhost:5432/glance_test" cargo run
+    DATABASE_URL="postgres://glance:glance@localhost:${GLANCE_DB_PORT}/glance_test" cargo run
 
 # Build release binary
 build:
@@ -74,7 +84,8 @@ db-logs:
 db-reset:
     #!/usr/bin/env bash
     set -euo pipefail
+    echo "Resetting container: $GLANCE_CONTAINER"
     docker compose down -v
     docker compose up -d postgres
     echo "Waiting for database to be ready..."
-    until docker ps -q -f name=^glance-postgres$ -f health=healthy | grep -q .; do sleep 1; done
+    until docker ps -q -f name="^${GLANCE_CONTAINER}$" -f health=healthy | grep -q .; do sleep 1; done

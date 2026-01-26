@@ -1,13 +1,13 @@
 services:
   postgres:
     image: postgres:16
-    container_name: glance-postgres
+    container_name: ${GLANCE_CONTAINER:-glance-postgres}
     environment:
       POSTGRES_USER: glance
       POSTGRES_PASSWORD: glance
       POSTGRES_DB: glance_test
     ports:
-      - "5432:5432"
+      - "${GLANCE_DB_PORT:-5432}:5432"
     volumes:
       - ./tests/fixtures/seed.sql:/docker-entrypoint-initdb.d/seed.sql
     healthcheck:
