@@ -49,9 +49,11 @@ impl OpenAiConfig {
     }
 
     /// Sets the request timeout.
-    pub fn with_timeout(mut self, timeout_secs: u64) -> Self {
-        self.timeout_secs = timeout_secs;
-        self
+    pub fn with_timeout(self, timeout_secs: u64) -> Self {
+        Self {
+            timeout_secs,
+            ..self
+        }
     }
 }
 

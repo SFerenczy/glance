@@ -56,9 +56,11 @@ impl QueryResult {
     }
 
     /// Sets the execution time.
-    pub fn with_execution_time(mut self, duration: Duration) -> Self {
-        self.execution_time = duration;
-        self
+    pub fn with_execution_time(self, duration: Duration) -> Self {
+        Self {
+            execution_time: duration,
+            ..self
+        }
     }
 
     /// Returns true if the result set is empty.

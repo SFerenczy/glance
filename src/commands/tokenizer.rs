@@ -251,9 +251,11 @@ impl ParseError {
     }
 
     /// Adds a hint to the error.
-    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
-        self.hint = Some(hint.into());
-        self
+    pub fn with_hint(self, hint: impl Into<String>) -> Self {
+        Self {
+            hint: Some(hint.into()),
+            ..self
+        }
     }
 }
 

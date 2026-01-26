@@ -64,9 +64,11 @@ impl Default for StateDbConfig {
 #[allow(dead_code)]
 impl StateDbConfig {
     /// Creates a new configuration with the specified pool size.
-    pub fn with_pool_size(mut self, size: u32) -> Self {
-        self.pool_size = size;
-        self
+    pub fn with_pool_size(self, size: u32) -> Self {
+        Self {
+            pool_size: size,
+            ..self
+        }
     }
 
     /// Creates a configuration from environment variables.

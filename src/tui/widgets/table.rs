@@ -36,15 +36,19 @@ impl<'a> ResultTable<'a> {
     }
 
     /// Sets whether to show row numbers.
-    pub fn show_row_numbers(mut self, show: bool) -> Self {
-        self.show_row_numbers = show;
-        self
+    pub fn show_row_numbers(self, show: bool) -> Self {
+        Self {
+            show_row_numbers: show,
+            ..self
+        }
     }
 
     /// Sets whether this table should be highlighted.
-    pub fn highlighted(mut self, highlighted: bool) -> Self {
-        self.highlighted = highlighted;
-        self
+    pub fn highlighted(self, highlighted: bool) -> Self {
+        Self {
+            highlighted,
+            ..self
+        }
     }
 
     /// Calculates the optimal width for each column.

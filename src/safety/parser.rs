@@ -74,16 +74,10 @@ impl SqlClassifier {
         }
 
         // Multiple statements: use the most dangerous classification
-        let mut max_level = SafetyLevel::Safe;
-        let mut max_stmt_type = StatementType::Unknown;
-
-        for stmt in &statements {
-            let (level, stmt_type) = classify_statement(stmt);
-            if level_priority(&level) > level_priority(&max_level) {
-                max_level = level;
-                max_stmt_type = stmt_type;
-            }
-        }
+        let (max_level, max_stmt_type) = max_by_safety(
+            statements.iter().map(classify_statement),
+            (SafetyLevel::Safe, StatementType::Unknown),
+        );
 
         let result = if max_level == SafetyLevel::Destructive {
             ClassificationResult::with_warning(
@@ -112,6 +106,22 @@ fn level_priority(level: &SafetyLevel) -> u8 {
         SafetyLevel::Mutating => 1,
         SafetyLevel::Destructive => 2,
     }
+}
+
+fn max_by_safety<I>(
+    classifications: I,
+    default: (SafetyLevel, StatementType),
+) -> (SafetyLevel, StatementType)
+where
+    I: IntoIterator<Item = (SafetyLevel, StatementType)>,
+{
+    classifications.into_iter().fold(default, |current, next| {
+        if level_priority(&next.0) > level_priority(&current.0) {
+            next
+        } else {
+            current
+        }
+    })
 }
 
 /// Classifies a single parsed statement.
@@ -173,28 +183,21 @@ fn classify_statement(statement: &Statement) -> (SafetyLevel, StatementType) {
 /// Classifies a Query by recursively inspecting for data-modifying operations.
 /// Returns the most dangerous (SafetyLevel, StatementType) found.
 fn classify_query(query: &Query) -> (SafetyLevel, StatementType) {
-    let mut max_level = SafetyLevel::Safe;
-    let mut max_type = StatementType::Select;
-
     // Check CTEs in WITH clause
-    if let Some(with) = &query.with {
-        for cte in &with.cte_tables {
-            let (level, stmt_type) = classify_query(&cte.query);
-            if level_priority(&level) > level_priority(&max_level) {
-                max_level = level;
-                max_type = stmt_type;
-            }
-        }
-    }
+    let cte_max = query
+        .with
+        .as_ref()
+        .map(|with| {
+            max_by_safety(
+                with.cte_tables.iter().map(|cte| classify_query(&cte.query)),
+                (SafetyLevel::Safe, StatementType::Select),
+            )
+        })
+        .unwrap_or((SafetyLevel::Safe, StatementType::Select));
 
     // Check the main query body
-    let (body_level, body_type) = classify_set_expr(&query.body);
-    if level_priority(&body_level) > level_priority(&max_level) {
-        max_level = body_level;
-        max_type = body_type;
-    }
-
-    (max_level, max_type)
+    let body = classify_set_expr(&query.body);
+    max_by_safety(std::iter::once(body), cte_max)
 }
 
 /// Classifies a SetExpr, detecting mutations and recursing into nested queries.
@@ -230,42 +233,22 @@ fn classify_set_expr(set_expr: &SetExpr) -> (SafetyLevel, StatementType) {
 
 /// Classifies a Select by checking its FROM clause for subqueries.
 fn classify_select(select: &Select) -> (SafetyLevel, StatementType) {
-    let mut max_level = SafetyLevel::Safe;
-    let mut max_type = StatementType::Select;
-
-    for table_with_joins in &select.from {
-        let (level, stmt_type) = classify_table_with_joins(table_with_joins);
-        if level_priority(&level) > level_priority(&max_level) {
-            max_level = level;
-            max_type = stmt_type;
-        }
-    }
-
-    (max_level, max_type)
+    max_by_safety(
+        select.from.iter().map(classify_table_with_joins),
+        (SafetyLevel::Safe, StatementType::Select),
+    )
 }
 
 /// Classifies a TableWithJoins, checking the main relation and all joins.
 fn classify_table_with_joins(twj: &TableWithJoins) -> (SafetyLevel, StatementType) {
-    let mut max_level = SafetyLevel::Safe;
-    let mut max_type = StatementType::Select;
-
     // Check the main relation
-    let (level, stmt_type) = classify_table_factor(&twj.relation);
-    if level_priority(&level) > level_priority(&max_level) {
-        max_level = level;
-        max_type = stmt_type;
-    }
-
-    // Check all joins
-    for join in &twj.joins {
-        let (level, stmt_type) = classify_table_factor(&join.relation);
-        if level_priority(&level) > level_priority(&max_level) {
-            max_level = level;
-            max_type = stmt_type;
-        }
-    }
-
-    (max_level, max_type)
+    let base = classify_table_factor(&twj.relation);
+    max_by_safety(
+        twj.joins
+            .iter()
+            .map(|join| classify_table_factor(&join.relation)),
+        base,
+    )
 }
 
 /// Classifies a TableFactor, recursing into derived tables (subqueries).

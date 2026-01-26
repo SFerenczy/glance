@@ -411,7 +411,7 @@ pub struct App {
     /// Maximum queue depth.
     pub queue_max: usize,
     /// Index of the assistant message currently receiving streamed tokens.
-    streaming_assistant_index: Option<usize>,
+    pub(crate) streaming_assistant_index: Option<usize>,
     /// Index of the result message to highlight and expiry time.
     pub result_highlight: Option<(usize, Instant)>,
     /// Whether the secret storage warning badge has been dismissed.

@@ -25,26 +25,36 @@ impl ScreenRenderer {
     /// Renders a buffer to a plain text string.
     pub fn render(buffer: &Buffer) -> String {
         let area = buffer.area;
-        let mut output = String::new();
-
-        for y in 0..area.height {
-            for x in 0..area.width {
-                let cell = buffer.cell((x, y)).unwrap();
-                output.push_str(cell.symbol());
-            }
-            // Trim trailing whitespace from each line
-            while output.ends_with(' ') {
-                output.pop();
-            }
-            output.push('\n');
+        if area.height == 0 {
+            return String::new();
         }
 
-        // Remove trailing empty lines
-        while output.ends_with("\n\n") {
-            output.pop();
-        }
+        let lines = (0..area.height)
+            .map(|y| {
+                let line = (0..area.width)
+                    .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                    .collect::<Vec<_>>()
+                    .join("");
+                line.trim_end_matches(' ').to_string()
+            })
+            .collect::<Vec<_>>();
 
-        output
+        let trimmed_lines = lines
+            .into_iter()
+            .rev()
+            .skip_while(|line| line.is_empty())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>();
+
+        let output_lines = if trimmed_lines.is_empty() {
+            vec![String::new()]
+        } else {
+            trimmed_lines
+        };
+
+        format!("{}\n", output_lines.join("\n"))
     }
 }
 
@@ -87,28 +97,22 @@ impl HeadlessOutput {
 
     /// Formats as plain text.
     fn format_text(&self, result: &HeadlessResult) -> String {
-        let mut output = String::new();
-
-        // Screen content
-        output.push_str(&result.screen);
-        output.push('\n');
-
-        // Summary line
-        output.push_str(&format!(
-            "Events: {} executed in {}ms",
-            result.events_executed,
-            result.duration.as_millis()
-        ));
-
-        if result.assertions_passed > 0 || result.assertions_failed > 0 {
-            output.push_str(&format!(
+        let assertions = if result.assertions_passed > 0 || result.assertions_failed > 0 {
+            format!(
                 " | Assertions: {} passed, {} failed",
                 result.assertions_passed, result.assertions_failed
-            ));
-        }
+            )
+        } else {
+            String::new()
+        };
 
-        output.push('\n');
-        output
+        format!(
+            "{}\nEvents: {} executed in {}ms{}\n",
+            result.screen,
+            result.events_executed,
+            result.duration.as_millis(),
+            assertions
+        )
     }
 
     /// Formats as JSON.
@@ -131,38 +135,36 @@ impl HeadlessOutput {
 
     /// Formats as frame-by-frame output.
     fn format_frames(&self, result: &HeadlessResult) -> String {
-        let mut output = String::new();
+        let frames_text = result
+            .frames
+            .iter()
+            .map(|frame| {
+                let event_desc = frame.event.as_deref().unwrap_or("initial");
+                format!(
+                    "=== FRAME {} ({}) ===\n{}\n\n",
+                    frame.number, event_desc, frame.screen
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("");
 
-        for frame in &result.frames {
-            let event_desc = match &frame.event {
-                Some(e) => e.clone(),
-                None => "initial".to_string(),
-            };
-
-            output.push_str(&format!(
-                "=== FRAME {} ({}) ===\n",
-                frame.number, event_desc
-            ));
-            output.push_str(&frame.screen);
-            output.push_str("\n\n");
-        }
-
-        // Final summary
-        output.push_str(&format!(
-            "Total: {} frames, {} events executed in {}ms\n",
-            result.frames.len(),
-            result.events_executed,
-            result.duration.as_millis()
-        ));
-
-        if result.assertions_passed > 0 || result.assertions_failed > 0 {
-            output.push_str(&format!(
+        let assertions = if result.assertions_passed > 0 || result.assertions_failed > 0 {
+            format!(
                 "Assertions: {} passed, {} failed\n",
                 result.assertions_passed, result.assertions_failed
-            ));
-        }
+            )
+        } else {
+            String::new()
+        };
 
-        output
+        format!(
+            "{}Total: {} frames, {} events executed in {}ms\n{}",
+            frames_text,
+            result.frames.len(),
+            result.events_executed,
+            result.duration.as_millis(),
+            assertions
+        )
     }
 }
 

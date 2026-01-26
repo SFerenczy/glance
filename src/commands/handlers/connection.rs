@@ -26,23 +26,28 @@ pub async fn handle_connections_list(ctx: &CommandContext<'_>) -> CommandResult 
         return CommandResult::system("No saved connections. Use /conn add <name> to add one.");
     }
 
-    let mut output = String::from("Saved connections:\n");
-    for conn in &connections {
-        let last_used = conn.last_used_at.as_deref().unwrap_or("never");
-        let user_display = conn
-            .redacted_username()
-            .map(|u| format!("{}@", u))
-            .unwrap_or_default();
-        output.push_str(&format!(
-            "  • {} - {} ({}{}:{}, last used: {})\n",
-            conn.name,
-            conn.database,
-            user_display,
-            conn.redacted_host(),
-            conn.port,
-            last_used
-        ));
-    }
+    let connections_text = connections
+        .iter()
+        .map(|conn| {
+            let last_used = conn.last_used_at.as_deref().unwrap_or("never");
+            let user_display = conn
+                .redacted_username()
+                .map(|u| format!("{}@", u))
+                .unwrap_or_default();
+            format!(
+                "  • {} - {} ({}{}:{}, last used: {})\n",
+                conn.name,
+                conn.database,
+                user_display,
+                conn.redacted_host(),
+                conn.port,
+                last_used
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+    let output = format!("Saved connections:\n{}", connections_text);
 
     CommandResult::system(output.trim_end().to_string())
 }
@@ -242,17 +247,19 @@ pub async fn handle_conn_add(args: &ConnectionAddArgs, state_db: &Arc<StateDb>) 
             } else {
                 ""
             };
-            let mut msg = format!(
+            let base_msg = format!(
                 "Connection '{}' saved{}. Use /connect {} to use it.",
                 args.name, test_msg, args.name
             );
 
-            // Warn about plaintext password storage if keyring unavailable
-            if args.password.is_some() && !state_db.secrets().is_secure() {
-                msg.push_str(
-                    "\n\n⚠️  Warning: OS keyring unavailable. Password stored as plaintext.",
-                );
-            }
+            let msg = if args.password.is_some() && !state_db.secrets().is_secure() {
+                format!(
+                    "{}\n\n⚠️  Warning: OS keyring unavailable. Password stored as plaintext.",
+                    base_msg
+                )
+            } else {
+                base_msg
+            };
 
             CommandResult::system(msg)
         }
@@ -384,14 +391,16 @@ pub async fn handle_conn_edit(args: &ConnectionEditArgs, state_db: &Arc<StateDb>
             } else {
                 ""
             };
-            let mut msg = format!("Connection '{}' updated{}.", args.name, test_msg);
+            let base_msg = format!("Connection '{}' updated{}.", args.name, test_msg);
 
-            // Warn about plaintext password storage if keyring unavailable
-            if args.password.is_some() && !state_db.secrets().is_secure() {
-                msg.push_str(
-                    "\n\n⚠️  Warning: OS keyring unavailable. Password stored as plaintext.",
-                );
-            }
+            let msg = if args.password.is_some() && !state_db.secrets().is_secure() {
+                format!(
+                    "{}\n\n⚠️  Warning: OS keyring unavailable. Password stored as plaintext.",
+                    base_msg
+                )
+            } else {
+                base_msg
+            };
 
             CommandResult::system(msg)
         }
@@ -441,70 +450,56 @@ pub async fn handle_conn_delete(
 
 /// Reconstructs a /conn add command from parsed args (for replaying after consent).
 fn reconstruct_conn_add_command(args: &ConnectionAddArgs) -> String {
-    let mut cmd = format!("/conn add {}", args.name);
-
-    if let Some(backend) = &args.backend {
-        cmd.push_str(&format!(" backend={}", backend));
-    }
-    if let Some(host) = &args.host {
-        cmd.push_str(&format!(" host={}", host));
-    }
-    if args.port != 5432 {
-        cmd.push_str(&format!(" port={}", args.port));
-    }
-    if let Some(database) = &args.database {
-        cmd.push_str(&format!(" database={}", database));
-    }
-    if let Some(user) = &args.user {
-        cmd.push_str(&format!(" user={}", user));
-    }
-    if let Some(password) = &args.password {
-        cmd.push_str(&format!(" password={}", password));
-    }
-    if let Some(sslmode) = &args.sslmode {
-        cmd.push_str(&format!(" sslmode={}", sslmode));
-    }
-    if let Some(extras) = &args.extras {
-        cmd.push_str(&format!(" {}", extras));
-    }
-    if args.test {
-        cmd.push_str(" --test");
-    }
-
-    cmd
+    [
+        Some(format!("/conn add {}", args.name)),
+        args.backend
+            .as_ref()
+            .map(|backend| format!("backend={}", backend)),
+        args.host.as_ref().map(|host| format!("host={}", host)),
+        (args.port != 5432).then_some(format!("port={}", args.port)),
+        args.database
+            .as_ref()
+            .map(|database| format!("database={}", database)),
+        args.user.as_ref().map(|user| format!("user={}", user)),
+        args.password
+            .as_ref()
+            .map(|password| format!("password={}", password)),
+        args.sslmode
+            .as_ref()
+            .map(|sslmode| format!("sslmode={}", sslmode)),
+        args.extras.as_ref().map(|extras| extras.to_string()),
+        args.test.then_some("--test".to_string()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ")
 }
 
 /// Reconstructs a /conn edit command from parsed args (for replaying after consent).
 fn reconstruct_conn_edit_command(args: &ConnectionEditArgs) -> String {
-    let mut cmd = format!("/conn edit {}", args.name);
-
-    if let Some(backend) = &args.backend {
-        cmd.push_str(&format!(" backend={}", backend));
-    }
-    if let Some(host) = &args.host {
-        cmd.push_str(&format!(" host={}", host));
-    }
-    if let Some(port) = args.port {
-        cmd.push_str(&format!(" port={}", port));
-    }
-    if let Some(database) = &args.database {
-        cmd.push_str(&format!(" database={}", database));
-    }
-    if let Some(user) = &args.user {
-        cmd.push_str(&format!(" user={}", user));
-    }
-    if let Some(password) = &args.password {
-        cmd.push_str(&format!(" password={}", password));
-    }
-    if let Some(sslmode) = &args.sslmode {
-        cmd.push_str(&format!(" sslmode={}", sslmode));
-    }
-    if let Some(extras) = &args.extras {
-        cmd.push_str(&format!(" {}", extras));
-    }
-    if args.test {
-        cmd.push_str(" --test");
-    }
-
-    cmd
+    [
+        Some(format!("/conn edit {}", args.name)),
+        args.backend
+            .as_ref()
+            .map(|backend| format!("backend={}", backend)),
+        args.host.as_ref().map(|host| format!("host={}", host)),
+        args.port.map(|port| format!("port={}", port)),
+        args.database
+            .as_ref()
+            .map(|database| format!("database={}", database)),
+        args.user.as_ref().map(|user| format!("user={}", user)),
+        args.password
+            .as_ref()
+            .map(|password| format!("password={}", password)),
+        args.sslmode
+            .as_ref()
+            .map(|sslmode| format!("sslmode={}", sslmode)),
+        args.extras.as_ref().map(|extras| extras.to_string()),
+        args.test.then_some("--test".to_string()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ")
 }

@@ -29,22 +29,26 @@ impl MockLlmClient {
     }
 
     /// Enables tool call simulation for testing.
-    pub fn with_tool_calls(mut self) -> Self {
-        self.simulate_tool_calls = true;
-        self
+    pub fn with_tool_calls(self) -> Self {
+        Self {
+            simulate_tool_calls: true,
+            ..self
+        }
     }
 
     /// Adds a custom response mapping.
     ///
     /// When the input contains `pattern`, the mock will return `response`.
-    pub fn with_response(
-        mut self,
-        pattern: impl Into<String>,
-        response: impl Into<String>,
-    ) -> Self {
-        self.custom_responses
-            .push((pattern.into(), response.into()));
-        self
+    pub fn with_response(self, pattern: impl Into<String>, response: impl Into<String>) -> Self {
+        let custom_responses = self
+            .custom_responses
+            .into_iter()
+            .chain(std::iter::once((pattern.into(), response.into())))
+            .collect();
+        Self {
+            custom_responses,
+            ..self
+        }
     }
 
     /// Generates a mock response based on the input.

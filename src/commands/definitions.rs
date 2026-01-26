@@ -368,8 +368,6 @@ pub static COMMANDS: &[CommandDef] = &[
 /// Generates help text from command definitions.
 #[allow(dead_code)]
 pub fn generate_help_text() -> String {
-    let mut output = String::new();
-
     // Group commands by category
     let categories = [
         CommandCategory::General,
@@ -379,41 +377,48 @@ pub fn generate_help_text() -> String {
         CommandCategory::Llm,
     ];
 
-    for category in categories {
-        let cmds: Vec<_> = COMMANDS.iter().filter(|c| c.category == category).collect();
+    let category_blocks = categories
+        .iter()
+        .filter_map(|category| {
+            let cmds: Vec<_> = COMMANDS
+                .iter()
+                .filter(|c| c.category == *category)
+                .collect();
 
-        if cmds.is_empty() {
-            continue;
-        }
+            if cmds.is_empty() {
+                return None;
+            }
 
-        output.push_str(category.display_name());
-        output.push_str(":\n");
+            let command_lines = cmds
+                .iter()
+                .map(|cmd| {
+                    let aliases = if cmd.aliases.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", /{}", cmd.aliases.join(", /"))
+                    };
+                    format!("  /{}{:<12} - {}\n", cmd.name, aliases, cmd.description)
+                })
+                .collect::<Vec<_>>()
+                .join("");
 
-        for cmd in cmds {
-            // Format: "  /command  - description"
-            let aliases = if cmd.aliases.is_empty() {
-                String::new()
-            } else {
-                format!(", /{}", cmd.aliases.join(", /"))
-            };
-            output.push_str(&format!(
-                "  /{}{:<12} - {}\n",
-                cmd.name, aliases, cmd.description
-            ));
-        }
-        output.push('\n');
-    }
+            Some(format!("{}:\n{}\n", category.display_name(), command_lines))
+        })
+        .collect::<Vec<_>>()
+        .join("");
 
-    // Add keyboard shortcuts
-    output.push_str("Keyboard shortcuts:\n");
-    output.push_str("  Ctrl+C, Ctrl+Q  - Exit application\n");
-    output.push_str("  Tab             - Switch focus between panels\n");
-    output.push_str("  Enter           - Submit input\n");
-    output.push_str("  Esc             - Clear input (or exit to Normal mode in vim mode)\n");
-    output.push_str("  ↑/↓             - History navigation or scroll\n");
-    output.push_str("  Page Up/Down    - Scroll by page");
+    let keyboard_shortcuts = [
+        "Keyboard shortcuts:",
+        "  Ctrl+C, Ctrl+Q  - Exit application",
+        "  Tab             - Switch focus between panels",
+        "  Enter           - Submit input",
+        "  Esc             - Clear input (or exit to Normal mode in vim mode)",
+        "  ↑/↓             - History navigation or scroll",
+        "  Page Up/Down    - Scroll by page",
+    ]
+    .join("\n");
 
-    output
+    format!("{}{}", category_blocks, keyboard_shortcuts)
 }
 
 /// Finds a command definition by name.

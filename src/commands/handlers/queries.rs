@@ -125,27 +125,32 @@ pub async fn handle_queries_list(
         return CommandResult::system("No saved queries found.");
     }
 
-    let mut output = String::from("Saved queries:\n");
-    for query in &queries {
-        let tags_str = if query.tags.is_empty() {
-            String::new()
-        } else {
+    let queries_text = queries
+        .iter()
+        .map(|query| {
+            let tags_str = if query.tags.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " [{}]",
+                    query
+                        .tags
+                        .iter()
+                        .map(|t| format!("#{}", t))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            };
+            let scope = query.connection_name.as_deref().unwrap_or("global");
             format!(
-                " [{}]",
-                query
-                    .tags
-                    .iter()
-                    .map(|t| format!("#{}", t))
-                    .collect::<Vec<_>>()
-                    .join(" ")
+                "  • {} ({}){} - used {} times\n",
+                query.name, scope, tags_str, query.usage_count
             )
-        };
-        let scope = query.connection_name.as_deref().unwrap_or("global");
-        output.push_str(&format!(
-            "  • {} ({}){} - used {} times\n",
-            query.name, scope, tags_str, query.usage_count
-        ));
-    }
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+    let output = format!("Saved queries:\n{}", queries_text);
 
     CommandResult::Messages(
         vec![ChatMessage::System(output.trim_end().to_string())],

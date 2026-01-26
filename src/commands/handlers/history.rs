@@ -30,26 +30,31 @@ pub async fn handle_history(ctx: &CommandContext<'_>, args: &HistoryArgs) -> Com
         return CommandResult::system("No history entries found.");
     }
 
-    let mut output = String::from("Query history:\n");
-    for entry in &entries {
-        let status_icon = match entry.status {
-            QueryStatus::Success => "✓",
-            QueryStatus::Error => "✗",
-            QueryStatus::Cancelled => "○",
-        };
-        let sql_preview: String = entry.sql.chars().take(60).collect();
-        let sql_preview = if entry.sql.len() > 60 {
-            format!("{}...", sql_preview)
-        } else {
-            sql_preview
-        };
-        output.push_str(&format!(
-            "  {} [{}] {}\n",
-            status_icon,
-            entry.created_at,
-            sql_preview.replace('\n', " ")
-        ));
-    }
+    let entries_text = entries
+        .iter()
+        .map(|entry| {
+            let status_icon = match entry.status {
+                QueryStatus::Success => "✓",
+                QueryStatus::Error => "✗",
+                QueryStatus::Cancelled => "○",
+            };
+            let sql_preview: String = entry.sql.chars().take(60).collect();
+            let sql_preview = if entry.sql.len() > 60 {
+                format!("{}...", sql_preview)
+            } else {
+                sql_preview
+            };
+            format!(
+                "  {} [{}] {}\n",
+                status_icon,
+                entry.created_at,
+                sql_preview.replace('\n', " ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+    let output = format!("Query history:\n{}", entries_text);
 
     CommandResult::Messages(
         vec![ChatMessage::System(output.trim_end().to_string())],

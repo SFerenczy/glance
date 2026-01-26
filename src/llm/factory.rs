@@ -52,47 +52,59 @@ impl LlmConfigBuilder {
 
     /// Sets CLI overrides (highest priority).
     pub fn with_cli_overrides(
-        mut self,
+        self,
         provider: Option<LlmProvider>,
         model: Option<String>,
         api_key: Option<String>,
         base_url: Option<String>,
     ) -> Self {
-        self.cli_provider = provider;
-        self.cli_model = model;
-        self.cli_api_key = api_key;
-        self.cli_base_url = base_url;
-        self
+        Self {
+            cli_provider: provider,
+            cli_model: model,
+            cli_api_key: api_key,
+            cli_base_url: base_url,
+            ..self
+        }
     }
 
     /// Sets persisted settings from state database.
     pub fn with_persisted(
-        mut self,
+        self,
         provider: Option<String>,
         model: Option<String>,
         api_key: Option<String>,
     ) -> Self {
-        self.persisted_provider = provider;
-        self.persisted_model = model;
-        self.persisted_api_key = api_key;
-        self
+        Self {
+            persisted_provider: provider,
+            persisted_model: model,
+            persisted_api_key: api_key,
+            ..self
+        }
     }
 
     /// Loads persisted settings from state database.
-    pub async fn load_from_persistence(mut self, state_db: Option<&Arc<StateDb>>) -> Result<Self> {
-        if let Some(db) = state_db {
-            let settings = persistence::llm_settings::get_llm_settings(db.pool()).await?;
-            self.persisted_provider = Some(settings.provider.clone());
-            self.persisted_model = if settings.model.is_empty() {
-                None
-            } else {
-                Some(settings.model)
-            };
-            self.persisted_api_key =
-                persistence::llm_settings::get_api_key(db.pool(), &settings.provider, db.secrets())
-                    .await?;
-        }
-        Ok(self)
+    pub async fn load_from_persistence(self, state_db: Option<&Arc<StateDb>>) -> Result<Self> {
+        let Some(db) = state_db else {
+            return Ok(self);
+        };
+
+        let settings = persistence::llm_settings::get_llm_settings(db.pool()).await?;
+        let persisted_provider = Some(settings.provider.clone());
+        let persisted_model = if settings.model.is_empty() {
+            None
+        } else {
+            Some(settings.model)
+        };
+        let persisted_api_key =
+            persistence::llm_settings::get_api_key(db.pool(), &settings.provider, db.secrets())
+                .await?;
+
+        Ok(Self {
+            persisted_provider,
+            persisted_model,
+            persisted_api_key,
+            ..self
+        })
     }
 
     /// Builds the final RuntimeLlmConfig by resolving all layers.

@@ -57,15 +57,16 @@ impl AnthropicConfig {
     }
 
     /// Sets the request timeout.
-    pub fn with_timeout(mut self, timeout_secs: u64) -> Self {
-        self.timeout_secs = timeout_secs;
-        self
+    pub fn with_timeout(self, timeout_secs: u64) -> Self {
+        Self {
+            timeout_secs,
+            ..self
+        }
     }
 
     /// Sets the maximum tokens to generate.
-    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
-        self.max_tokens = max_tokens;
-        self
+    pub fn with_max_tokens(self, max_tokens: u32) -> Self {
+        Self { max_tokens, ..self }
     }
 }
 

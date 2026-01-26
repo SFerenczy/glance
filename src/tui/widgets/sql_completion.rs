@@ -85,9 +85,11 @@ impl CompletionItem {
     }
 
     /// Sets the detail for the completion item.
-    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
-        self.detail = Some(detail.into());
-        self
+    pub fn with_detail(self, detail: impl Into<String>) -> Self {
+        Self {
+            detail: Some(detail.into()),
+            ..self
+        }
     }
 }
 

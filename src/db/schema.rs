@@ -5,7 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::fmt::Write;
 use std::hash::{Hash, Hasher};
 
 /// Represents the complete schema of a database.
@@ -31,102 +30,108 @@ impl Schema {
     /// Produces a human-readable representation that helps the LLM
     /// understand the database structure.
     pub fn format_for_llm(&self) -> String {
-        let mut output = String::from("Database Schema:\n\n");
+        let tables_text = self
+            .tables
+            .iter()
+            .map(|table| self.format_table_for_llm(table))
+            .collect::<Vec<_>>()
+            .join("");
 
-        for table in &self.tables {
-            writeln!(output, "Table: {}", table.name).unwrap();
-            for column in &table.columns {
-                let mut annotations = Vec::new();
-
-                if table.primary_key.contains(&column.name) {
-                    annotations.push("PK");
-                }
-                if !column.is_nullable {
-                    annotations.push("NOT NULL");
-                }
-
-                // Check if this column is a foreign key
-                for fk in &self.foreign_keys {
-                    if fk.from_table == table.name && fk.from_columns.contains(&column.name) {
-                        let fk_ref = format!(
-                            "FK -> {}.{}",
-                            fk.to_table,
-                            fk.to_columns.first().unwrap_or(&String::new())
-                        );
-                        // We need to handle this differently since we can't push a String
-                        // into a Vec<&str>. We'll build the annotation string separately.
-                        let annotation_str = if annotations.is_empty() {
-                            fk_ref
-                        } else {
-                            format!("{}, {}", annotations.join(", "), fk_ref)
-                        };
-                        if let Some(ref default) = column.default {
-                            writeln!(
-                                output,
-                                "  - {}: {} ({}, DEFAULT {})",
-                                column.name, column.data_type, annotation_str, default
-                            )
-                            .unwrap();
-                        } else {
-                            writeln!(
-                                output,
-                                "  - {}: {} ({})",
-                                column.name, column.data_type, annotation_str
-                            )
-                            .unwrap();
-                        }
-                        continue;
-                    }
-                }
-
-                // If we didn't continue (no FK), write the normal line
-                let annotation_str = annotations.join(", ");
-                if annotation_str.is_empty() {
-                    if let Some(ref default) = column.default {
-                        writeln!(
-                            output,
-                            "  - {}: {} (DEFAULT {})",
-                            column.name, column.data_type, default
-                        )
-                        .unwrap();
-                    } else {
-                        writeln!(output, "  - {}: {}", column.name, column.data_type).unwrap();
-                    }
-                } else if let Some(ref default) = column.default {
-                    writeln!(
-                        output,
-                        "  - {}: {} ({}, DEFAULT {})",
-                        column.name, column.data_type, annotation_str, default
+        let foreign_keys_text = if self.foreign_keys.is_empty() {
+            String::new()
+        } else {
+            let fk_lines = self
+                .foreign_keys
+                .iter()
+                .map(|fk| {
+                    format!(
+                        "  - {}.{} -> {}.{}\n",
+                        fk.from_table,
+                        fk.from_columns.join(", "),
+                        fk.to_table,
+                        fk.to_columns.join(", ")
                     )
-                    .unwrap();
-                } else {
-                    writeln!(
-                        output,
-                        "  - {}: {} ({})",
-                        column.name, column.data_type, annotation_str
-                    )
-                    .unwrap();
-                }
-            }
-            output.push('\n');
-        }
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            format!("Foreign Keys:\n{}", fk_lines)
+        };
 
-        if !self.foreign_keys.is_empty() {
-            output.push_str("Foreign Keys:\n");
-            for fk in &self.foreign_keys {
-                writeln!(
-                    output,
-                    "  - {}.{} -> {}.{}",
-                    fk.from_table,
-                    fk.from_columns.join(", "),
+        format!("Database Schema:\n\n{}{}", tables_text, foreign_keys_text)
+    }
+
+    fn format_table_for_llm(&self, table: &Table) -> String {
+        let column_lines = table
+            .columns
+            .iter()
+            .map(|column| self.format_column_for_llm(table, column))
+            .collect::<Vec<_>>()
+            .join("");
+
+        format!("Table: {}\n{}\n", table.name, column_lines)
+    }
+
+    fn format_column_for_llm(&self, table: &Table, column: &Column) -> String {
+        let annotations = [
+            table.primary_key.contains(&column.name).then_some("PK"),
+            (!column.is_nullable).then_some("NOT NULL"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        let base_annotation = annotations.join(", ");
+
+        let fk_lines = self
+            .foreign_keys
+            .iter()
+            .filter(|fk| fk.from_table == table.name && fk.from_columns.contains(&column.name))
+            .map(|fk| {
+                let fk_ref = format!(
+                    "FK -> {}.{}",
                     fk.to_table,
-                    fk.to_columns.join(", ")
-                )
-                .unwrap();
-            }
-        }
+                    fk.to_columns.first().map(String::as_str).unwrap_or("")
+                );
+                let annotation = if base_annotation.is_empty() {
+                    fk_ref
+                } else {
+                    format!("{}, {}", base_annotation, fk_ref)
+                };
+                Self::format_column_line(column, Some(annotation.as_str()))
+            })
+            .collect::<Vec<_>>();
 
-        output
+        let base_line = if base_annotation.is_empty() {
+            Self::format_column_line(column, None)
+        } else {
+            Self::format_column_line(column, Some(base_annotation.as_str()))
+        };
+
+        fk_lines
+            .into_iter()
+            .chain(std::iter::once(base_line))
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    fn format_column_line(column: &Column, annotation: Option<&str>) -> String {
+        let annotation = annotation.filter(|value| !value.is_empty());
+        match (annotation, &column.default) {
+            (Some(annotation), Some(default)) => format!(
+                "  - {}: {} ({}, DEFAULT {})\n",
+                column.name, column.data_type, annotation, default
+            ),
+            (Some(annotation), None) => {
+                format!(
+                    "  - {}: {} ({})\n",
+                    column.name, column.data_type, annotation
+                )
+            }
+            (None, Some(default)) => format!(
+                "  - {}: {} (DEFAULT {})\n",
+                column.name, column.data_type, default
+            ),
+            (None, None) => format!("  - {}: {}\n", column.name, column.data_type),
+        }
     }
 
     /// Formats the schema for display in the TUI.
@@ -222,15 +227,19 @@ impl Column {
     }
 
     /// Sets whether the column is nullable.
-    pub fn nullable(mut self, nullable: bool) -> Self {
-        self.is_nullable = nullable;
-        self
+    pub fn nullable(self, nullable: bool) -> Self {
+        Self {
+            is_nullable: nullable,
+            ..self
+        }
     }
 
     /// Sets the default value.
-    pub fn with_default(mut self, default: impl Into<String>) -> Self {
-        self.default = Some(default.into());
-        self
+    pub fn with_default(self, default: impl Into<String>) -> Self {
+        Self {
+            default: Some(default.into()),
+            ..self
+        }
     }
 }
 
@@ -295,9 +304,11 @@ impl Index {
     }
 
     /// Sets whether the index is unique.
-    pub fn unique(mut self, unique: bool) -> Self {
-        self.is_unique = unique;
-        self
+    pub fn unique(self, unique: bool) -> Self {
+        Self {
+            is_unique: unique,
+            ..self
+        }
     }
 }
 

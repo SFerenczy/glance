@@ -42,15 +42,19 @@ impl OllamaConfig {
     }
 
     /// Sets the base URL.
-    pub fn with_url(mut self, url: impl Into<String>) -> Self {
-        self.base_url = url.into();
-        self
+    pub fn with_url(self, url: impl Into<String>) -> Self {
+        Self {
+            base_url: url.into(),
+            ..self
+        }
     }
 
     /// Sets the request timeout.
-    pub fn with_timeout(mut self, timeout_secs: u64) -> Self {
-        self.timeout_secs = timeout_secs;
-        self
+    pub fn with_timeout(self, timeout_secs: u64) -> Self {
+        Self {
+            timeout_secs,
+            ..self
+        }
     }
 }
 

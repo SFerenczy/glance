@@ -163,11 +163,15 @@ impl HeadlessRunner {
     }
 
     /// Sets the orchestrator for command processing.
-    pub fn with_orchestrator(mut self, orchestrator: Orchestrator) -> Self {
-        // Copy schema to app for SQL completion
-        self.app.schema = Some(orchestrator.schema().clone());
-        self.orchestrator = Some(orchestrator);
-        self
+    pub fn with_orchestrator(self, orchestrator: Orchestrator) -> Self {
+        Self {
+            app: App {
+                schema: Some(orchestrator.schema().clone()),
+                ..self.app
+            },
+            orchestrator: Some(orchestrator),
+            ..self
+        }
     }
 
     /// Loads events from a string (comma-separated or newline-separated).
