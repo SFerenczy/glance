@@ -227,7 +227,60 @@ pub enum Command {
 /// Command router for parsing user input.
 pub struct CommandRouter;
 
+/// Token with flag-value pairs already resolved.
+#[derive(Debug, Clone)]
+enum PairedToken {
+    /// A --flag followed by a word value.
+    FlagValue { flag: String, value: String },
+    /// A key=value pair.
+    KeyValue { key: String, value: String },
+    /// A standalone --flag (boolean).
+    LongFlag(String),
+    /// Other tokens (short flags, words) that don't need special handling.
+    #[allow(dead_code)]
+    Other,
+}
+
 impl CommandRouter {
+    /// Pre-process tokens to pair --flag with following word values.
+    ///
+    /// Converts `[LongFlag("conn"), Word("prod")]` into `[FlagValue { flag: "conn", value: "prod" }]`.
+    fn pair_flag_values(tokens: &[Token]) -> Vec<PairedToken> {
+        tokens
+            .iter()
+            .enumerate()
+            .filter_map(|(i, token)| {
+                match token {
+                    Token::LongFlag(flag) => {
+                        // Check if next token is a Word (the value)
+                        if let Some(Token::Word(val)) = tokens.get(i + 1) {
+                            Some(PairedToken::FlagValue {
+                                flag: flag.clone(),
+                                value: val.clone(),
+                            })
+                        } else {
+                            Some(PairedToken::LongFlag(flag.clone()))
+                        }
+                    }
+                    Token::KeyValue { key, value } => Some(PairedToken::KeyValue {
+                        key: key.clone(),
+                        value: value.clone(),
+                    }),
+                    Token::Word(_) => {
+                        // Skip words that were consumed as flag values
+                        if i > 0 {
+                            if let Some(Token::LongFlag(_)) = tokens.get(i - 1) {
+                                return None;
+                            }
+                        }
+                        Some(PairedToken::Other)
+                    }
+                    Token::ShortFlag(_) => Some(PairedToken::Other),
+                }
+            })
+            .collect()
+    }
+
     /// Parse user input into a Command.
     pub fn parse(input: &str) -> Command {
         let input = input.trim();
@@ -332,136 +385,214 @@ impl CommandRouter {
 
     /// Parse connection add arguments using the tokenizer.
     fn parse_conn_add_args(args: &str) -> Command {
-        let mut name = String::new();
-        let mut backend = None;
-        let mut host = None;
-        let mut port = 5432u16;
-        let mut database = None;
-        let mut user = None;
-        let mut password = None;
-        let mut sslmode = None;
-        let mut test = false;
-        let mut extras_map: std::collections::HashMap<String, serde_json::Value> =
-            std::collections::HashMap::new();
-
-        let tokens = tokenize(args);
-
-        for token in tokens {
-            match token {
-                Token::KeyValue { key, value } => match key.as_str() {
-                    "backend" => backend = Some(value),
-                    "host" => host = Some(value),
-                    "port" => port = value.parse().unwrap_or(5432),
-                    "database" | "db" => database = Some(value),
-                    "user" => user = Some(value),
-                    "password" | "pwd" => password = Some(value),
-                    "sslmode" => sslmode = Some(value),
-                    // Collect unknown key-value pairs as extras
-                    _ => {
-                        extras_map.insert(key, serde_json::Value::String(value));
-                    }
-                },
-                Token::LongFlag(flag) if flag == "test" => test = true,
-                Token::ShortFlag('t') => test = true,
-                Token::Word(word) if name.is_empty() => name = word,
-                _ => {}
-            }
+        #[derive(Default)]
+        struct ParseState {
+            name: Option<String>,
+            backend: Option<String>,
+            host: Option<String>,
+            port: u16,
+            database: Option<String>,
+            user: Option<String>,
+            password: Option<String>,
+            sslmode: Option<String>,
+            test: bool,
+            extras: std::collections::HashMap<String, serde_json::Value>,
         }
 
-        let extras = if extras_map.is_empty() {
+        let state = tokenize(args).into_iter().fold(
+            ParseState {
+                port: 5432,
+                ..Default::default()
+            },
+            |state, token| match token {
+                Token::KeyValue { key, value } => match key.as_str() {
+                    "backend" => ParseState {
+                        backend: Some(value),
+                        ..state
+                    },
+                    "host" => ParseState {
+                        host: Some(value),
+                        ..state
+                    },
+                    "port" => ParseState {
+                        port: value.parse().unwrap_or(5432),
+                        ..state
+                    },
+                    "database" | "db" => ParseState {
+                        database: Some(value),
+                        ..state
+                    },
+                    "user" => ParseState {
+                        user: Some(value),
+                        ..state
+                    },
+                    "password" | "pwd" => ParseState {
+                        password: Some(value),
+                        ..state
+                    },
+                    "sslmode" => ParseState {
+                        sslmode: Some(value),
+                        ..state
+                    },
+                    _ => {
+                        let extras = state
+                            .extras
+                            .into_iter()
+                            .chain(std::iter::once((key, serde_json::Value::String(value))))
+                            .collect();
+                        ParseState { extras, ..state }
+                    }
+                },
+                Token::LongFlag(flag) if flag == "test" => ParseState {
+                    test: true,
+                    ..state
+                },
+                Token::ShortFlag('t') => ParseState {
+                    test: true,
+                    ..state
+                },
+                Token::Word(word) if state.name.is_none() => ParseState {
+                    name: Some(word),
+                    ..state
+                },
+                _ => state,
+            },
+        );
+
+        let extras = if state.extras.is_empty() {
             None
         } else {
-            Some(serde_json::Value::Object(extras_map.into_iter().collect()))
+            Some(serde_json::Value::Object(
+                state.extras.into_iter().collect(),
+            ))
         };
 
         Command::ConnectionAdd(ConnectionAddArgs {
-            name,
-            backend,
-            host,
-            port,
-            database,
-            user,
-            password,
-            sslmode,
+            name: state.name.unwrap_or_default(),
+            backend: state.backend,
+            host: state.host,
+            port: state.port,
+            database: state.database,
+            user: state.user,
+            password: state.password,
+            sslmode: state.sslmode,
             extras,
-            test,
+            test: state.test,
         })
     }
 
     /// Parse connection delete arguments.
     fn parse_conn_delete_args(args: &str) -> Command {
-        let mut name = String::new();
-        let mut confirmed = false;
+        let (name, confirmed) =
+            tokenize(args)
+                .into_iter()
+                .fold(
+                    (None::<String>, false),
+                    |(name, confirmed), token| match token {
+                        Token::LongFlag(flag) if flag == "confirm" => (name, true),
+                        Token::ShortFlag('y') => (name, true),
+                        Token::Word(word) if name.is_none() => (Some(word), confirmed),
+                        _ => (name, confirmed),
+                    },
+                );
 
-        let tokens = tokenize(args);
-
-        for token in tokens {
-            match token {
-                Token::LongFlag(flag) if flag == "confirm" => confirmed = true,
-                Token::ShortFlag('y') => confirmed = true,
-                Token::Word(word) if name.is_empty() => name = word,
-                _ => {}
-            }
-        }
-
-        Command::ConnectionDelete(ConnectionDeleteArgs { name, confirmed })
+        Command::ConnectionDelete(ConnectionDeleteArgs {
+            name: name.unwrap_or_default(),
+            confirmed,
+        })
     }
 
     /// Parse connection edit arguments using the tokenizer.
     fn parse_conn_edit_args(args: &str) -> Command {
-        let mut name = String::new();
-        let mut backend = None;
-        let mut host = None;
-        let mut port = None;
-        let mut database = None;
-        let mut user = None;
-        let mut password = None;
-        let mut sslmode = None;
-        let mut test = false;
-        let mut extras_map: std::collections::HashMap<String, serde_json::Value> =
-            std::collections::HashMap::new();
-
-        let tokens = tokenize(args);
-
-        for token in tokens {
-            match token {
-                Token::KeyValue { key, value } => match key.as_str() {
-                    "backend" => backend = Some(value),
-                    "host" => host = Some(value),
-                    "port" => port = value.parse().ok(),
-                    "database" | "db" => database = Some(value),
-                    "user" => user = Some(value),
-                    "password" | "pwd" => password = Some(value),
-                    "sslmode" => sslmode = Some(value),
-                    // Collect unknown key-value pairs as extras
-                    _ => {
-                        extras_map.insert(key, serde_json::Value::String(value));
-                    }
-                },
-                Token::LongFlag(flag) if flag == "test" => test = true,
-                Token::ShortFlag('t') => test = true,
-                Token::Word(word) if name.is_empty() => name = word,
-                _ => {}
-            }
+        #[derive(Default)]
+        struct ParseState {
+            name: Option<String>,
+            backend: Option<String>,
+            host: Option<String>,
+            port: Option<u16>,
+            database: Option<String>,
+            user: Option<String>,
+            password: Option<String>,
+            sslmode: Option<String>,
+            test: bool,
+            extras: std::collections::HashMap<String, serde_json::Value>,
         }
 
-        let extras = if extras_map.is_empty() {
+        let state = tokenize(args)
+            .into_iter()
+            .fold(ParseState::default(), |state, token| match token {
+                Token::KeyValue { key, value } => match key.as_str() {
+                    "backend" => ParseState {
+                        backend: Some(value),
+                        ..state
+                    },
+                    "host" => ParseState {
+                        host: Some(value),
+                        ..state
+                    },
+                    "port" => ParseState {
+                        port: value.parse().ok(),
+                        ..state
+                    },
+                    "database" | "db" => ParseState {
+                        database: Some(value),
+                        ..state
+                    },
+                    "user" => ParseState {
+                        user: Some(value),
+                        ..state
+                    },
+                    "password" | "pwd" => ParseState {
+                        password: Some(value),
+                        ..state
+                    },
+                    "sslmode" => ParseState {
+                        sslmode: Some(value),
+                        ..state
+                    },
+                    _ => {
+                        let extras = state
+                            .extras
+                            .into_iter()
+                            .chain(std::iter::once((key, serde_json::Value::String(value))))
+                            .collect();
+                        ParseState { extras, ..state }
+                    }
+                },
+                Token::LongFlag(flag) if flag == "test" => ParseState {
+                    test: true,
+                    ..state
+                },
+                Token::ShortFlag('t') => ParseState {
+                    test: true,
+                    ..state
+                },
+                Token::Word(word) if state.name.is_none() => ParseState {
+                    name: Some(word),
+                    ..state
+                },
+                _ => state,
+            });
+
+        let extras = if state.extras.is_empty() {
             None
         } else {
-            Some(serde_json::Value::Object(extras_map.into_iter().collect()))
+            Some(serde_json::Value::Object(
+                state.extras.into_iter().collect(),
+            ))
         };
 
         Command::ConnectionEdit(ConnectionEditArgs {
-            name,
-            backend,
-            host,
-            port,
-            database,
-            user,
-            password,
-            sslmode,
+            name: state.name.unwrap_or_default(),
+            backend: state.backend,
+            host: state.host,
+            port: state.port,
+            database: state.database,
+            user: state.user,
+            password: state.password,
+            sslmode: state.sslmode,
             extras,
-            test,
+            test: state.test,
         })
     }
 
@@ -475,117 +606,145 @@ impl CommandRouter {
             return Command::HistoryClear { confirmed: true };
         }
 
-        let mut history_args = HistoryArgs::default();
+        // Pre-process tokens to pair --flag with following word values
         let tokens = tokenize(args);
-        let mut iter = tokens.iter().peekable();
+        let paired = Self::pair_flag_values(&tokens);
 
-        while let Some(token) = iter.next() {
-            match token {
-                Token::LongFlag(flag) => {
-                    // Look for the next token as the value
-                    if let Some(Token::Word(val)) = iter.peek() {
-                        match flag.as_str() {
-                            "conn" => {
-                                history_args.connection = Some(val.clone());
-                                iter.next();
-                            }
-                            "text" => {
-                                history_args.text = Some(val.clone());
-                                iter.next();
-                            }
-                            "limit" => {
-                                history_args.limit = val.parse().ok();
-                                iter.next();
-                            }
-                            "since" => {
-                                history_args.since_days = val.parse().ok();
-                                iter.next();
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Token::KeyValue { key, value } => match key.as_str() {
-                    "conn" => history_args.connection = Some(value.clone()),
-                    "text" => history_args.text = Some(value.clone()),
-                    "limit" => history_args.limit = value.parse().ok(),
-                    "since" => history_args.since_days = parse_duration_to_days(value),
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
+        let history_args =
+            paired
+                .into_iter()
+                .fold(HistoryArgs::default(), |args, token| match token {
+                    PairedToken::FlagValue { flag, value } => match flag.as_str() {
+                        "conn" => HistoryArgs {
+                            connection: Some(value),
+                            ..args
+                        },
+                        "text" => HistoryArgs {
+                            text: Some(value),
+                            ..args
+                        },
+                        "limit" => HistoryArgs {
+                            limit: value.parse().ok(),
+                            ..args
+                        },
+                        "since" => HistoryArgs {
+                            since_days: value.parse().ok(),
+                            ..args
+                        },
+                        _ => args,
+                    },
+                    PairedToken::KeyValue { key, value } => match key.as_str() {
+                        "conn" => HistoryArgs {
+                            connection: Some(value),
+                            ..args
+                        },
+                        "text" => HistoryArgs {
+                            text: Some(value),
+                            ..args
+                        },
+                        "limit" => HistoryArgs {
+                            limit: value.parse().ok(),
+                            ..args
+                        },
+                        "since" => HistoryArgs {
+                            since_days: parse_duration_to_days(&value),
+                            ..args
+                        },
+                        _ => args,
+                    },
+                    _ => args,
+                });
 
         Command::History(history_args)
     }
 
     /// Parse /savequery command arguments.
     fn parse_savequery_command(args: &str) -> Command {
-        let mut name = String::new();
-        let mut description = None;
-        let mut tags = Vec::new();
-        let tokens = tokenize(args);
-
-        for token in tokens {
-            match token {
-                Token::Word(word) => {
-                    if word.starts_with('#') {
-                        tags.push(word.trim_start_matches('#').to_string());
-                    } else if name.is_empty() {
-                        name = word;
-                    }
-                }
-                Token::KeyValue { key, value } => {
-                    if key == "description" || key == "desc" {
-                        description = Some(value);
-                    }
-                }
-                _ => {}
-            }
+        struct ParseState {
+            name: Option<String>,
+            description: Option<String>,
+            tags: Vec<String>,
         }
 
+        let state = tokenize(args).into_iter().fold(
+            ParseState {
+                name: None,
+                description: None,
+                tags: Vec::new(),
+            },
+            |state, token| match token {
+                Token::Word(word) if word.starts_with('#') => ParseState {
+                    tags: state
+                        .tags
+                        .into_iter()
+                        .chain(std::iter::once(word.trim_start_matches('#').to_string()))
+                        .collect(),
+                    ..state
+                },
+                Token::Word(word) if state.name.is_none() => ParseState {
+                    name: Some(word),
+                    ..state
+                },
+                Token::KeyValue { key, value } if key == "description" || key == "desc" => {
+                    ParseState {
+                        description: Some(value),
+                        ..state
+                    }
+                }
+                _ => state,
+            },
+        );
+
         Command::SaveQuery(SaveQueryArgs {
-            name,
-            description,
-            tags,
+            name: state.name.unwrap_or_default(),
+            description: state.description,
+            tags: state.tags,
         })
     }
 
     /// Parse /queries command arguments using the tokenizer.
     fn parse_queries_command(args: &str) -> Command {
-        let mut queries_args = QueriesListArgs::default();
         let tokens = tokenize(args);
-        let mut iter = tokens.iter().peekable();
+        let paired = Self::pair_flag_values(&tokens);
 
-        while let Some(token) = iter.next() {
-            match token {
-                Token::LongFlag(flag) => match flag.as_str() {
-                    "all" => queries_args.all = true,
-                    "tag" | "text" | "conn" => {
-                        if let Some(Token::Word(val)) = iter.peek() {
-                            match flag.as_str() {
-                                "tag" => {
-                                    queries_args.tag =
-                                        Some(val.trim_start_matches('#').to_string());
-                                }
-                                "text" => queries_args.text = Some(val.clone()),
-                                "conn" => queries_args.connection = Some(val.clone()),
-                                _ => {}
-                            }
-                            iter.next();
-                        }
-                    }
-                    _ => {}
+        let queries_args = paired
+            .into_iter()
+            .fold(QueriesListArgs::default(), |args, token| match token {
+                PairedToken::LongFlag(flag) if flag == "all" => {
+                    QueriesListArgs { all: true, ..args }
+                }
+                PairedToken::FlagValue { flag, value } => match flag.as_str() {
+                    "tag" => QueriesListArgs {
+                        tag: Some(value.trim_start_matches('#').to_string()),
+                        ..args
+                    },
+                    "text" => QueriesListArgs {
+                        text: Some(value),
+                        ..args
+                    },
+                    "conn" => QueriesListArgs {
+                        connection: Some(value),
+                        ..args
+                    },
+                    _ => args,
                 },
-                Token::KeyValue { key, value } => match key.as_str() {
-                    "tag" => queries_args.tag = Some(value.trim_start_matches('#').to_string()),
-                    "text" => queries_args.text = Some(value.clone()),
-                    "conn" => queries_args.connection = Some(value.clone()),
-                    _ => {}
+                PairedToken::KeyValue { key, value } => match key.as_str() {
+                    "tag" => QueriesListArgs {
+                        tag: Some(value.trim_start_matches('#').to_string()),
+                        ..args
+                    },
+                    "text" => QueriesListArgs {
+                        text: Some(value),
+                        ..args
+                    },
+                    "conn" => QueriesListArgs {
+                        connection: Some(value),
+                        ..args
+                    },
+                    _ => args,
                 },
-                _ => {}
-            }
-        }
+                _ => args,
+            });
 
         Command::QueriesList(queries_args)
     }
@@ -597,25 +756,19 @@ impl CommandRouter {
         let rest = parts.get(1).map(|s| s.trim()).unwrap_or("");
 
         if subcommand == "delete" {
-            let tokens = tokenize(rest);
-            let mut name = String::new();
-            let mut confirmed = false;
+            let (name, confirmed) = tokenize(rest).into_iter().fold(
+                (None::<String>, false),
+                |(name, confirmed), token| match token {
+                    Token::Word(word) if name.is_none() => (Some(word), confirmed),
+                    Token::LongFlag(flag) if flag == "confirm" => (name, true),
+                    _ => (name, confirmed),
+                },
+            );
 
-            for token in tokens {
-                match token {
-                    Token::Word(word) => {
-                        if name.is_empty() {
-                            name = word;
-                        }
-                    }
-                    Token::LongFlag(flag) if flag == "confirm" => {
-                        confirmed = true;
-                    }
-                    _ => {}
-                }
-            }
-
-            Command::QueryDelete(QueryDeleteArgs { name, confirmed })
+            Command::QueryDelete(QueryDeleteArgs {
+                name: name.unwrap_or_default(),
+                confirmed,
+            })
         } else {
             Command::Unknown("/query".to_string())
         }
