@@ -1966,10 +1966,15 @@ impl App {
 
     /// Copies the last executed SQL to the clipboard.
     fn copy_last_sql(&mut self) {
+        use super::clipboard::CopyResult;
+
         if let Some(sql) = &self.last_executed_sql {
             match super::clipboard::copy(sql) {
-                Ok(()) => {
+                Ok(CopyResult::Copied) => {
                     self.show_toast("Copied SQL to clipboard");
+                }
+                Ok(CopyResult::CopiedUnverified) => {
+                    self.show_toast("Copied SQL (unverified)");
                 }
                 Err(e) => {
                     self.show_toast(format!("Failed to copy: {}", e));
@@ -1982,6 +1987,8 @@ impl App {
 
     /// Copies the selected text to the clipboard.
     fn copy_selection(&mut self) {
+        use super::clipboard::CopyResult;
+
         if let Some(ref selection) = self.text_selection {
             // Get the selected text from the rendered chat content
             if let Some(text) = self.get_selected_text(selection) {
@@ -1989,8 +1996,11 @@ impl App {
                     self.show_toast("No text selected");
                 } else {
                     match super::clipboard::copy(&text) {
-                        Ok(()) => {
+                        Ok(CopyResult::Copied) => {
                             self.show_toast("Copied to clipboard");
+                        }
+                        Ok(CopyResult::CopiedUnverified) => {
+                            self.show_toast("Copied (unverified)");
                         }
                         Err(e) => {
                             self.show_toast(format!("Failed to copy: {}", e));
