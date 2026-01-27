@@ -1,0 +1,11 @@
+# Shared developer optimizations
+# Requires: pacman -S sccache mold
+#
+# To use, create .cargo/config.toml with:
+#   include = ["config.dev.toml"]
+
+[build]
+rustc-wrapper = "sccache"
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
