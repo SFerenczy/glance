@@ -69,24 +69,6 @@ Rework AI chat to be more conversational:
 
 ## Developer Experience
 
-### Docker Worktree Support
-
-**Status**: Idea
-**Effort**: Low-Medium
-**Value**: Medium (developer experience)
-
-Make Docker development setup more robust for git worktree workflows:
-
-- **Shared volume configuration** - Handle multiple worktree checkouts gracefully
-- **Path-independent setup** - Don't assume fixed repo paths
-- **Worktree detection** - Auto-detect and configure for worktree environments
-
-**Use Cases**:
-- Developers using git worktrees for parallel feature development
-- CI environments with dynamic checkout paths
-
----
-
 ## Architecture & Testing
 
 ### Orchestrator Actor Pattern (v0.2d)
@@ -345,6 +327,22 @@ Two orchestrator actor tests are currently ignored due to timing dependencies wi
 4. Extract queue logic for unit testing without full actor setup
 
 **Impact**: Tests were passing before v0.2d actor refactor (commit 9e50285), then became flaky with tokio::select! implementation. Functionality works correctly in production, but we lack reliable automated verification.
+
+---
+
+### OS-Typical Word Deletion Shortcuts Missing
+
+**Status**: Reported
+**Effort**: Low
+**Priority**: Medium
+
+Standard shortcuts for removing words from input don't work:
+- `Ctrl+W` - Delete word backward
+- `Ctrl+Backspace` - Delete word backward
+- `Alt+Backspace` - Delete word backward
+- `Ctrl+Delete` - Delete word forward
+
+**Location**: Input handling in `src/tui/widgets/input.rs` or similar
 
 ---
 
