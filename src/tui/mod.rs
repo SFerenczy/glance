@@ -12,8 +12,11 @@ pub mod output_adapter;
 pub mod progress_reporter;
 pub mod request_queue;
 mod sql_autocomplete;
+mod text;
 mod ui;
 pub mod widgets;
+
+pub use text::{find_word_end_forward, find_word_start_backward};
 
 pub use app::App;
 #[allow(unused_imports)]

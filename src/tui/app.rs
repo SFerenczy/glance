@@ -325,6 +325,28 @@ impl InputState {
         self.text.clear();
         self.cursor = 0;
     }
+
+    /// Deletes the word before the cursor (Ctrl+W, Ctrl+Backspace, Alt+Backspace).
+    pub fn delete_word_backward(&mut self) {
+        let start = super::find_word_start_backward(&self.text, self.cursor);
+        if start < self.cursor {
+            let before: String = self.text.chars().take(start).collect();
+            let after: String = self.text.chars().skip(self.cursor).collect();
+            self.text = before + &after;
+            self.cursor = start;
+        }
+    }
+
+    /// Deletes the word after the cursor (Ctrl+Delete).
+    pub fn delete_word_forward(&mut self) {
+        let end = super::find_word_end_forward(&self.text, self.cursor);
+        if end > self.cursor {
+            let before: String = self.text.chars().take(self.cursor).collect();
+            let after: String = self.text.chars().skip(end).collect();
+            self.text = before + &after;
+            // cursor stays at same position
+        }
+    }
 }
 
 /// Main application state.
@@ -600,7 +622,7 @@ impl App {
     /// Handles key events in masked input mode.
     /// Returns true if the key was handled.
     pub fn handle_masked_input_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
-        use crossterm::event::KeyCode;
+        use crossterm::event::{KeyCode, KeyModifiers};
 
         if let Some(state) = &mut self.masked_input {
             match key.code {
@@ -612,14 +634,55 @@ impl App {
                     // Enter will be handled by submit_input
                     return false;
                 }
+                // Delete word backward with Ctrl+W
+                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    let start = super::find_word_start_backward(&state.value, state.cursor);
+                    if start < state.cursor {
+                        let before: String = state.value.chars().take(start).collect();
+                        let after: String = state.value.chars().skip(state.cursor).collect();
+                        state.value = before + &after;
+                        state.cursor = start;
+                    }
+                    return true;
+                }
                 KeyCode::Char(c) => {
                     state.value.insert(state.cursor, c);
                     state.cursor += 1;
                     return true;
                 }
+                // Delete word backward with Ctrl+Backspace or Alt+Backspace
+                KeyCode::Backspace
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        || key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    let start = super::find_word_start_backward(&state.value, state.cursor);
+                    if start < state.cursor {
+                        let before: String = state.value.chars().take(start).collect();
+                        let after: String = state.value.chars().skip(state.cursor).collect();
+                        state.value = before + &after;
+                        state.cursor = start;
+                    }
+                    return true;
+                }
                 KeyCode::Backspace => {
                     if state.cursor > 0 {
                         state.cursor -= 1;
+                        state.value.remove(state.cursor);
+                    }
+                    return true;
+                }
+                // Delete word forward with Ctrl+Delete
+                KeyCode::Delete if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    let end = super::find_word_end_forward(&state.value, state.cursor);
+                    if end > state.cursor {
+                        let before: String = state.value.chars().take(state.cursor).collect();
+                        let after: String = state.value.chars().skip(end).collect();
+                        state.value = before + &after;
+                    }
+                    return true;
+                }
+                KeyCode::Delete => {
+                    if state.cursor < state.value.len() {
                         state.value.remove(state.cursor);
                     }
                     return true;
@@ -1713,6 +1776,15 @@ impl App {
                 self.input.clear();
                 self.sql_completion.close();
             }
+            // Delete word backward with Ctrl+W
+            KeyCode::Char('w')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.input.delete_word_backward();
+                self.update_sql_completions();
+            }
             // History navigation (only when SQL completion not visible)
             KeyCode::Up => {
                 if let Some(entry) = self.input_history.previous(&self.input.text) {
@@ -1738,8 +1810,27 @@ impl App {
                     self.update_sql_completions();
                 }
             }
+            // Delete word backward with Ctrl+Backspace or Alt+Backspace
+            KeyCode::Backspace
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                    || key.modifiers.contains(crossterm::event::KeyModifiers::ALT) =>
+            {
+                self.input.delete_word_backward();
+                self.update_sql_completions();
+            }
             KeyCode::Backspace => {
                 self.input.backspace();
+                self.update_sql_completions();
+            }
+            // Delete word forward with Ctrl+Delete
+            KeyCode::Delete
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.input.delete_word_forward();
                 self.update_sql_completions();
             }
             KeyCode::Delete => {
@@ -2128,6 +2219,15 @@ impl App {
                 self.input.clear();
                 self.sql_completion.close();
             }
+            // Delete word backward with Ctrl+W
+            KeyCode::Char('w')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.input.delete_word_backward();
+                self.update_sql_completions();
+            }
             // History navigation
             KeyCode::Up => {
                 if let Some(entry) = self.input_history.previous(&self.input.text) {
@@ -2154,8 +2254,27 @@ impl App {
                     self.update_sql_completions();
                 }
             }
+            // Delete word backward with Ctrl+Backspace or Alt+Backspace
+            KeyCode::Backspace
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+                    || key.modifiers.contains(crossterm::event::KeyModifiers::ALT) =>
+            {
+                self.input.delete_word_backward();
+                self.update_sql_completions();
+            }
             KeyCode::Backspace => {
                 self.input.backspace();
+                self.update_sql_completions();
+            }
+            // Delete word forward with Ctrl+Delete
+            KeyCode::Delete
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.input.delete_word_forward();
                 self.update_sql_completions();
             }
             KeyCode::Delete => {
@@ -2612,5 +2731,71 @@ mod tests {
         // Dismiss warning
         app.dismiss_secret_warning();
         assert!(app.secret_warning_dismissed);
+    }
+
+    #[test]
+    fn delete_word_backward_removes_word() {
+        let mut input = InputState {
+            text: "SELECT * FROM users".to_string(),
+            cursor: 19,
+        };
+        input.delete_word_backward();
+        assert_eq!(input.text, "SELECT * FROM ");
+        assert_eq!(input.cursor, 14);
+    }
+
+    #[test]
+    fn delete_word_forward_removes_word() {
+        let mut input = InputState {
+            text: "SELECT * FROM users".to_string(),
+            cursor: 14,
+        };
+        input.delete_word_forward();
+        assert_eq!(input.text, "SELECT * FROM ");
+        assert_eq!(input.cursor, 14);
+    }
+
+    #[test]
+    fn delete_word_backward_at_start_is_noop() {
+        let mut input = InputState {
+            text: "hello".to_string(),
+            cursor: 0,
+        };
+        input.delete_word_backward();
+        assert_eq!(input.text, "hello");
+        assert_eq!(input.cursor, 0);
+    }
+
+    #[test]
+    fn delete_word_forward_at_end_is_noop() {
+        let mut input = InputState {
+            text: "hello".to_string(),
+            cursor: 5,
+        };
+        input.delete_word_forward();
+        assert_eq!(input.text, "hello");
+        assert_eq!(input.cursor, 5);
+    }
+
+    #[test]
+    fn delete_word_backward_with_multiple_spaces() {
+        let mut input = InputState {
+            text: "one   two".to_string(),
+            cursor: 9,
+        };
+        input.delete_word_backward();
+        assert_eq!(input.text, "one   ");
+        assert_eq!(input.cursor, 6);
+    }
+
+    #[test]
+    fn delete_word_forward_with_multiple_spaces() {
+        let mut input = InputState {
+            text: "one   two".to_string(),
+            cursor: 3,
+        };
+        input.delete_word_forward();
+        assert_eq!(input.text, "one");
+        assert_eq!(input.cursor, 3);
     }
 }
