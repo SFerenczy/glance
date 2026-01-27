@@ -369,6 +369,37 @@ However, integration tests expected completions to appear automatically when typ
 - May want to make this configurable via settings in future
 - Consider consolidating trigger logic to avoid dual conditions
 
+### Multi-Query Responses Stack in Chat View
+
+**Status**: Reported
+**Effort**: Low-Medium
+**Priority**: Medium (confusing UX)
+
+When the AI agent generates multiple queries in a conversation (e.g., user asks several questions in sequence), all SQL queries are appended together in a single code block at the top of the first response area instead of being shown inline with each respective response.
+
+**Current Behavior**:
+```
+Glance:
+  ```sql
+  SELECT COUNT(*) FROM users;
+  ```
+  ```sql
+  INSERT INTO users ...;
+  ```
+  ```sql
+  DELETE FROM users ...;
+  ```
+  [Results only for first query]
+```
+
+**Expected Behavior Options**:
+1. **Hide SQL entirely in chat** - Since the query log panel on the right already shows executed queries, don't duplicate them in the chat view
+2. **Inline per-response** - Each query should appear with its corresponding response/result, not stacked together
+
+**Location**: Likely in chat message rendering (`src/tui/widgets/chat.rs`) or how assistant responses are accumulated
+
+**Impact**: Users see a confusing wall of SQL that doesn't correspond to the visible results, making it hard to understand which query produced which output.
+
 ---
 
 ## Evaluation Criteria
