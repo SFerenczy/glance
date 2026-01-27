@@ -55,6 +55,11 @@ impl Spinner {
         Self::new(SpinnerType::Braille, "Executing")
     }
 
+    /// Creates a spinner for slash commands (e.g., "Connecting", "Refreshing").
+    pub fn command(label: impl Into<String>) -> Self {
+        Self::new(SpinnerType::Dots, label)
+    }
+
     /// Returns the current frame of the animation.
     pub fn frame(&self) -> &'static str {
         let elapsed_ms = self.start_time.elapsed().as_millis();

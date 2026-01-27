@@ -342,9 +342,19 @@ impl OrchestratorActor {
         self.send_queue_update().await;
     }
 
-    /// Processes natural language input.
+    /// Processes user input (commands or natural language).
     async fn process_input(&mut self, id: RequestId, input: &str, cancel: CancellationToken) {
-        let _ = self.progress_tx.send(ProgressMessage::LlmStarted).await;
+        // Send appropriate progress message based on input type
+        let trimmed = input.trim();
+        if let Some(label) = Self::command_spinner_label(trimmed) {
+            let _ = self
+                .progress_tx
+                .send(ProgressMessage::CommandStarted(label.to_string()))
+                .await;
+        } else if !trimmed.starts_with('/') {
+            let _ = self.progress_tx.send(ProgressMessage::LlmStarted).await;
+        }
+        // Fast slash commands (e.g., /help, /clear) don't need a spinner
 
         tokio::select! {
             biased;
@@ -368,7 +378,12 @@ impl OrchestratorActor {
                     }
                 }
             }) => {
-                let _ = self.progress_tx.send(ProgressMessage::LlmComplete(String::new())).await;
+                // Send appropriate completion message based on input type
+                if trimmed.starts_with('/') {
+                    let _ = self.progress_tx.send(ProgressMessage::CommandComplete).await;
+                } else {
+                    let _ = self.progress_tx.send(ProgressMessage::LlmComplete(String::new())).await;
+                }
                 match result {
                     Ok(InputResult::NeedsConfirmation { sql, classification }) => {
                         self.request_queue.set_confirmation_pending(true); // Pause queue
@@ -390,6 +405,21 @@ impl OrchestratorActor {
                     }
                 }
             }
+        }
+    }
+
+    /// Returns the spinner label for slow commands, or `None` for fast commands.
+    fn command_spinner_label(input: &str) -> Option<&'static str> {
+        if input.starts_with("/connect") {
+            Some("Connecting")
+        } else if input.starts_with("/refresh") {
+            Some("Refreshing")
+        } else if input.starts_with("/conn add") || input.starts_with("/conn edit") {
+            Some("Saving")
+        } else if input.starts_with("/conn delete") {
+            Some("Deleting")
+        } else {
+            None
         }
     }
 

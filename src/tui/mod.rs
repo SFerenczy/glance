@@ -73,6 +73,10 @@ pub enum ProgressMessage {
     DbStarted,
     /// Database query completed.
     DbComplete,
+    /// Slash command started (e.g., "Connecting").
+    CommandStarted(String),
+    /// Slash command completed.
+    CommandComplete,
     /// Operation encountered an error.
     Error(String),
     /// Operation was cancelled.
@@ -811,6 +815,12 @@ impl Tui {
                 app_state.spinner = Some(Spinner::executing());
             }
             ProgressMessage::DbComplete => {
+                app_state.spinner = None;
+            }
+            ProgressMessage::CommandStarted(label) => {
+                app_state.spinner = Some(Spinner::command(label));
+            }
+            ProgressMessage::CommandComplete => {
                 app_state.spinner = None;
             }
             ProgressMessage::Error(msg) => {
