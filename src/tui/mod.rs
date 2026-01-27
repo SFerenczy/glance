@@ -18,7 +18,7 @@ pub mod widgets;
 pub use app::App;
 #[allow(unused_imports)]
 pub use app::PendingQuery;
-pub use events::{Event, EventHandler};
+pub use events::Event;
 
 use crate::app::{InputResult, Orchestrator};
 use crate::config::ConnectionConfig;
@@ -79,7 +79,6 @@ pub enum ProgressMessage {
 /// The main TUI application runner.
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
-    event_handler: EventHandler,
     /// Flag to signal cancellation of pending operations.
     shutdown_flag: Arc<AtomicBool>,
     /// Cancellation tokens for pending requests, keyed by RequestId.
@@ -96,7 +95,6 @@ impl Tui {
     /// Creates a new TUI instance, initializing the terminal.
     pub fn new() -> Result<Self> {
         let terminal = Self::setup_terminal()?;
-        let event_handler = EventHandler::new();
 
         // Initialize clipboard (non-fatal if it fails)
         if let Err(e) = clipboard::init() {
@@ -105,7 +103,6 @@ impl Tui {
 
         Ok(Self {
             terminal,
-            event_handler,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             pending_cancellations: std::collections::HashMap::new(),
             queue_depth: 0,
@@ -200,79 +197,7 @@ impl Tui {
         Ok(())
     }
 
-    /// Runs the main TUI event loop (synchronous version without orchestrator).
-    pub fn run(
-        &mut self,
-        connection: Option<&ConnectionConfig>,
-        ui_config: &crate::config::UiConfig,
-    ) -> Result<()> {
-        // Set up panic hook to restore terminal on panic
-        let original_hook = panic::take_hook();
-        panic::set_hook(Box::new(move |panic_info| {
-            // Attempt to restore terminal
-            let _ = disable_raw_mode();
-            let _ = execute!(
-                io::stdout(),
-                LeaveAlternateScreen,
-                DisableMouseCapture,
-                DisableBracketedPaste
-            );
-            original_hook(panic_info);
-        }));
-
-        let mut app_state = App::new(connection, ui_config);
-
-        while app_state.running {
-            // Draw the UI
-            self.terminal
-                .draw(|frame| ui::render(frame, &mut app_state))
-                .map_err(|e| GlanceError::internal(format!("Failed to draw: {e}")))?;
-
-            // Handle events
-            if let Some(event) = self.event_handler.next()? {
-                // Filter for Press events only (same as async version)
-                if let Event::Key(ref key) = event {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-
-                    // Handle input submission (when palette is not open)
-                    if key.code == KeyCode::Enter
-                        && app_state.focus == app::Focus::Input
-                        && !app_state.command_palette.visible
-                    {
-                        if let Some(input) = app_state.submit_input() {
-                            // In limited mode, just show the input as a user message
-                            app_state.add_message(app::ChatMessage::User(input.clone()));
-                            app_state.add_message(app::ChatMessage::System(
-                                "No database connection. Running in limited mode.".to_string(),
-                            ));
-                        }
-                        continue;
-                    }
-                }
-
-                app_state.handle_event(event);
-
-                // Check if command palette requested immediate submission
-                if app_state.command_palette.take_submit_request() {
-                    if let Some(input) = app_state.submit_input() {
-                        app_state.add_message(app::ChatMessage::User(input.clone()));
-                        app_state.add_message(app::ChatMessage::System(
-                            "No database connection. Running in limited mode.".to_string(),
-                        ));
-                    }
-                }
-            }
-        }
-
-        // Restore panic hook
-        let _ = panic::take_hook();
-
-        Ok(())
-    }
-
-    /// Runs the main TUI event loop with orchestrator (async version).
+    /// Runs the main TUI event loop with orchestrator.
     pub async fn run_with_orchestrator(
         &mut self,
         connection: Option<&ConnectionConfig>,
@@ -314,6 +239,13 @@ impl Tui {
                     "⚠️  Secrets in plaintext (keyring unavailable). Press 'w' to dismiss.",
                 );
             }
+        }
+
+        // Add startup message when no connection is configured
+        if connection.is_none() {
+            app_state.add_message(app::ChatMessage::System(
+                "No database connection. Use /conn add to save a connection, then restart with --connection <name>.".into()
+            ));
         }
 
         // Channel for progress updates and orchestrator responses
@@ -899,25 +831,25 @@ impl Drop for Tui {
     }
 }
 
-/// Runs the TUI application (synchronous, without orchestrator).
-pub fn run(
-    connection: Option<&ConnectionConfig>,
-    ui_config: &crate::config::UiConfig,
-) -> Result<()> {
-    let mut tui = Tui::new()?;
-    tui.run(connection, ui_config)
-}
-
 /// Runs the TUI application with full orchestrator integration.
 pub async fn run_async(
-    connection: &ConnectionConfig,
+    connection: Option<&ConnectionConfig>,
     ui_config: &crate::config::UiConfig,
     llm_provider: LlmProvider,
     allow_plaintext: bool,
 ) -> Result<()> {
-    info!("Connecting to database...");
-    let orchestrator = Orchestrator::connect(connection, llm_provider).await?;
-    info!("Connected successfully");
+    let orchestrator = match connection {
+        Some(conn) => {
+            info!("Connecting to database...");
+            let orch = Orchestrator::connect(conn, llm_provider).await?;
+            info!("Connected successfully");
+            orch
+        }
+        None => {
+            info!("Starting without database connection");
+            Orchestrator::new_without_connection(llm_provider).await?
+        }
+    };
 
     // Grant plaintext consent if --allow-plaintext flag was passed
     if allow_plaintext {
@@ -927,7 +859,7 @@ pub async fn run_async(
     }
 
     let mut tui = Tui::new()?;
-    tui.run_with_orchestrator(Some(connection), ui_config, orchestrator)
+    tui.run_with_orchestrator(connection, ui_config, orchestrator)
         .await
 }
 

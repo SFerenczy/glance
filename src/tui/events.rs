@@ -16,17 +16,21 @@ pub enum Event {
     /// The terminal was resized.
     Resize(u16, u16),
     /// Text was pasted from clipboard (bracketed paste mode).
+    #[allow(dead_code)]
     Paste(String),
     /// A periodic tick (for animations/updates).
+    #[allow(dead_code)]
     Tick,
 }
 
 /// Handles terminal events.
+#[allow(dead_code)]
 pub struct EventHandler {
     /// Timeout for polling events.
     tick_rate: Duration,
 }
 
+#[allow(dead_code)]
 impl EventHandler {
     /// Creates a new event handler with default tick rate.
     pub fn new() -> Self {
@@ -36,7 +40,6 @@ impl EventHandler {
     }
 
     /// Creates a new event handler with a custom tick rate.
-    #[allow(dead_code)]
     pub fn with_tick_rate(tick_rate: Duration) -> Self {
         Self { tick_rate }
     }

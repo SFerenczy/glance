@@ -151,6 +151,32 @@ impl Orchestrator {
         Ok(())
     }
 
+    /// Creates an orchestrator without an active database connection.
+    ///
+    /// StateDb will be initialized for connection management.
+    /// Commands requiring a database will return helpful error messages.
+    pub async fn new_without_connection(llm_provider: LlmProvider) -> Result<Self> {
+        // Initialize state database (for connection management, history, etc.)
+        let state_db = StateDb::open_default().await.ok().map(Arc::new);
+
+        // Create LLM client (using persisted key if available)
+        let llm =
+            crate::llm::create_client_from_persistence(llm_provider, state_db.as_ref()).await?;
+
+        // Create connection manager with no active connection
+        let connection_manager = ConnectionManager::new(state_db.clone());
+
+        Ok(Self {
+            connection_manager,
+            llm_service: LlmService::new(llm),
+            schema: Schema::default(),
+            conversation: Conversation::new(),
+            state_db,
+            last_executed_sql: None,
+            pending_saved_query_id: None,
+        })
+    }
+
     /// Creates an orchestrator by connecting to the database and initializing components.
     pub async fn connect(connection: &ConnectionConfig, llm_provider: LlmProvider) -> Result<Self> {
         // Connect to database using the factory

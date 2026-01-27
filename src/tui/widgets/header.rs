@@ -115,6 +115,12 @@ impl Widget for Header<'_> {
                 format!(" [db: {}] ", info),
                 Style::default().bg(Color::Blue).fg(Color::White),
             ));
+        } else {
+            // No connection configured
+            right_spans.push(Span::styled(
+                " Not connected - use /conn add ",
+                Style::default().bg(Color::Blue).fg(Color::Yellow),
+            ));
         }
 
         // Render right side

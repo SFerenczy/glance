@@ -18,7 +18,7 @@ use cli::Cli;
 use config::{Config, ConnectionConfig};
 use error::{GlanceError, Result};
 use llm::LlmProvider;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() {
@@ -70,22 +70,23 @@ async fn run(cli: Cli) -> Result<()> {
     // 4. Environment variables
     let connection = resolve_connection(&cli, &config)?;
 
-    match connection {
-        Some(ref conn) => {
-            info!("Connection: {}", conn.display_string());
-
-            // Validate and parse LLM provider from config
-            let llm_provider = validate_llm_provider(&config.llm.provider, &config_path)?;
-
-            // Run with full orchestrator integration
-            tui::run_async(conn, &config.ui, llm_provider, cli.allow_plaintext()).await?;
-        }
-        None => {
-            warn!("No database connection configured. Running in limited mode.");
-            // Run without orchestrator (limited functionality)
-            tui::run(None, &config.ui)?;
-        }
+    if let Some(ref conn) = connection {
+        info!("Connection: {}", conn.display_string());
+    } else {
+        info!("No database connection configured. Use /conn add to save a connection.");
     }
+
+    // Validate and parse LLM provider from config
+    let llm_provider = validate_llm_provider(&config.llm.provider, &config_path)?;
+
+    // Always run with full orchestrator integration
+    tui::run_async(
+        connection.as_ref(),
+        &config.ui,
+        llm_provider,
+        cli.allow_plaintext(),
+    )
+    .await?;
 
     Ok(())
 }
